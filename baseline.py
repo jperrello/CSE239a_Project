@@ -13,8 +13,9 @@ class InterestPacket:
     def __repr__(self):
         return f"InterestPacket(user={self.user_id}, content={self.content_name}, time={self.timestamp})"
     
+    # Define comparison for heapq - online this is how it is typically implemented
     def __lt__(self, other):
-        return self.timestamp < other.timestamp  # Define comparison for heapq
+        return self.timestamp < other.timestamp  
 
 class DeferredRetrievalSimulator:
     def __init__(self, users, max_delay=5):
@@ -36,7 +37,7 @@ class DeferredRetrievalSimulator:
         packet = InterestPacket(user_id, content_name, self.time)
         self.request_queue.append(packet)
         
-        # Schedule a deferred retrieval with randomized delay
+        # Schedule a deferred retrieval with randomized delay (SPARTA code will change this)
         fetch_time = self.time + random.randint(1, self.max_delay)
         heapq.heappush(self.fetch_heap, (fetch_time, packet))
         print(f"{self.time}s: User {user_id} sent interest for {content_name}. Fetch scheduled at {fetch_time}s")
