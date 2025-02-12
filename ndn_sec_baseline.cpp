@@ -15,10 +15,9 @@
  *  - Shows where and how trust management mechanisms (like additional key fetching or policy checks)
  *    would be integrated if the default trust model does not suffice.
  *
- * Advice given by ChatGPTs o3 model:
- *  - The ndn-cxx library handles many low-level details for you. In advanced applications,
- *    you may want to override or extend these behaviors to experiment with alternative trust models.
- *  - There will be more comments from ChatGPT's o3 model in this code. I labeled them as ChatGPT.
+ *  - The ndn-cxx library handles many low-level details for us. In advanced applications,
+ *    we may want to override or extend these behaviors to experiment with alternative trust models.
+ *  
  * 
  * Compilation (assuming ndn-cxx is installed):
  *   g++ -std=c++11 -o ndn_consumer ndn_consumer.cpp $(pkg-config --cflags --libs ndn-cxx)
@@ -45,7 +44,7 @@
      , m_keyChain() //  KeyChain enables PKI signature verification.
    {
     // The KeyChain is preconfigured with trusted keys and certificates for fast verification.
-     // ChatGPT: In advanced scenarios, you could configure m_keyChain with a custom trust model or policy.
+     // In the future: In advanced scenarios, we could configure m_keyChain with a custom trust model or policy.
    }
  
    // The run() method starts the consumer by expressing an Interest for a specific named data.
@@ -106,8 +105,8 @@
      string payloadStr(reinterpret_cast<const char*>(payload.value()), payload.value_size());
      cout << "Data payload: " << payloadStr << endl;
  
-     // ChatGPT: Here, further application logic can be implemented,
-     // ChatGPT: such as content access control or additional key/trust management.
+     // Future: Here, further application logic can be implemented,
+     // Future: such as content access control or additional key/trust management.
      // Currently, my solution to this is to launch asynchronous blockchain verification
      // Dont worry, this does not block any packet processing so throughput remains the same.
      verifyBlockchainAsync(data);
@@ -153,7 +152,7 @@
        else {
          cerr << "Blockchain verification failed for certificate from: "
               << data.getName().toUri() << endl;
-         // ChatGPT: Optionally, trigger further error handling or certificate update procedures.
+         // Future: Optionally, trigger further error handling or certificate update procedures.
        }
      }).detach(); // Detach the thread so it runs independently.
    }
