@@ -115,7 +115,7 @@
    // Callback  when signature verification fails.
    void onVerificationFailed(const Data& data, const std::string& reason) {
      cerr << "Data signature verification failed: " << reason << endl;
-     // In a research context, this is where alternative trust management strategies
+     // Future: this is where alternative trust management strategies
      // could be applied, such as retrieving a new key, checking alternate trust paths,
      // or prompting for user intervention.
    }
@@ -141,10 +141,10 @@
        std::this_thread::sleep_for(std::chrono::seconds(1));
 
        // Simulated blockchain verification logic.
-       // This is where we wood query the blockchain to see if it is successful
+       // This is where we would query the blockchain to see if it is successful
        // for now this is just labeled as true to say it was a successful query
-       bool blockchainVerified = true; // Assume verification is successful.
-
+       bool blockchainVerified = true; 
+       
        if (blockchainVerified) {
          cout << "Blockchain verification successful for certificate from: "
               << data.getName().toUri() << endl;
