@@ -42,21 +42,19 @@ RUN ./waf install && ldconfig
 RUN ln -s /usr/lib/x86_64-linux-gnu/ /usr/lib64
 USER ndn
 
-# --- End ndnSIM Setup ---
+# --- End Setup ---
 
-# --- Add and Build Simulation Code ---
+# --- Add baseline code ---
 
-# Switch to root to set up the simulation environment
+# Switch to root
 USER root
 
-# Set a new working directory
+
 WORKDIR /app
 
-# Copy  baseline simulation code from the build context to /app inside the container
 COPY baseline-ndn-simulation.cpp .
 
-# (Optional) If a C++ compiler isn't already available, uncomment the following line:
- RUN apt-get update && apt-get install -y build-essential
+RUN apt-get update && apt-get install -y build-essential
 
 # Compile 
 RUN g++ baseline-ndn-simulation.cpp -o baseline-ndn-simulation
@@ -64,5 +62,5 @@ RUN g++ baseline-ndn-simulation.cpp -o baseline-ndn-simulation
 # Switch back to the non-root user
 USER ndn
 
-# Set the default command to run  simulation code
+# Set default command
 CMD ["/app/baseline-ndn-simulation"]
