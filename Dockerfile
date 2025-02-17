@@ -37,6 +37,41 @@ WORKDIR ${NS3_PATH}
 # RUN sed -e 's/speed_adj = gtk.Adjustment(1.0/speed_adj = gtk.Adjustment(0.4/g' -i ./src/visualizer/visualizer/core.py
 RUN ./waf configure -d optimized && ./waf
 USER root
+
+# --- (optional for setting up visualization) ---
+# GTK and X11 support for visualization
+RUN sed -i '/cloud.r-project.org/d' /etc/apt/sources.list && \
+apt-key adv --keyserver keyserver.ubuntu.com --recv-keys E298A3A825C0D65DFD57CBB651716619E084DAB9
+
+# Install Python 2.7 and required packages
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
+python2.7 \
+python2.7-dev \
+python-is-python2 \
+graphviz \
+libgraphviz-dev \
+pkg-config \
+libcairo2-dev \
+libgirepository1.0-dev \
+gir1.2-gtk-3.0 \
+gir1.2-goocanvas-2.0 \
+python3-pip \
+curl \
+x11-apps \
+&& apt-get clean \
+&& rm -rf /var/lib/apt/lists/*
+
+# Install pip for Python 2
+RUN curl https://bootstrap.pypa.io/pip/2.7/get-pip.py --output get-pip.py && \
+python2.7 get-pip.py && \
+rm get-pip.py
+
+# Install Python 2 packages via pip
+RUN pip2 install \
+pygraphviz \
+ipython==5.10.0 \
+pygobject
+
 RUN ./waf install && ldconfig
 # Fix for potential issues with library paths
 RUN ln -s /usr/lib/x86_64-linux-gnu/ /usr/lib64
