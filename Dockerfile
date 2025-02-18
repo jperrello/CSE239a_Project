@@ -90,6 +90,9 @@ WORKDIR /app
 COPY baseline-ndn-simulation.cpp .
 
 RUN apt-get update && apt-get install -y build-essential
+#needed for ssl. I am putting this here so that it will be installed when compiling SIMULATION CODE. 
+# It will make sure OpenSSL (used in ob-map) will be built.
+RUN apt-get update && apt-get install -y build-essential libssl-dev
 
 # Compile 
 RUN g++ baseline-ndn-simulation.cpp -o baseline-ndn-simulation
