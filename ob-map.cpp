@@ -1,6 +1,6 @@
 /// ---------------------------------------------------------------------
 // Below is the code for an oblivious map. 
-// This code will be used to improve upon the FIB (Forwarding Interest Base)
+// This code will be used to improve upon the FIB (Forwarding Information Base)
 // and PIT (Personal Interest Table) within NDN Architectures.
 //
 // FIB:
