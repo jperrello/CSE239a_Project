@@ -20,32 +20,19 @@
 // access patterns, and volume information, without simply padding every 
 // operation to a worst-case scenario.
 /// ---------------------------------------------------------------------
+
+#ifndef OB_QUEUE_HPP
+#define OB_QUEUE_HPP
+
 #include <iostream>
 #include <vector>
 #include <stdexcept>
 #include <openssl/rand.h>
 #include <atomic>   // For memory fences
 
-
-///--------------------------------------------------------------
-// Below are two functions. The first is a helper function that 
-// use RAND_bytes to generate a cryptographically secure random 
-// 32-bit number. Then, the second uses this to generate a random 
-// index within a given range.
-///--------------------------------------------------------------
-uint32_t secure_random() {
-    uint32_t num;
-    if (RAND_bytes(reinterpret_cast<unsigned char*>(&num), sizeof(num)) != 1) {
-        throw std::runtime_error("RAND_bytes failed");
-    }
-    return num;
-}
+#include "ob-map.hpp"
 
 
-size_t secure_random_index(size_t range) {
-    if (range == 0) return 0;
-    return secure_random() % range;
-}
 
 ///--------------------------------------------------------------
 /// perform_buffer_dummy:
@@ -68,20 +55,6 @@ void perform_buffer_dummy(const std::vector<T>& buffer, size_t head, size_t coun
     std::atomic_signal_fence(std::memory_order_seq_cst);
 }
 
-///--------------------------------------------------------------
-/// perform_extra_dummy:
-///   Performs additional dummy computations to further obfuscate the operation pattern.
-///   A memory fence is inserted afterward for same reasons as above.
-///--------------------------------------------------------------
-void perform_extra_dummy() {
-    int accum = 0;
-    const int extraOps = 10; //fixed dummy ops
-    for (int i = 0; i < extraOps; ++i) {
-         accum += i;
-    }
-    (void)accum;
-    std::atomic_signal_fence(std::memory_order_seq_cst);
-}
 
 template<typename T>
 class ObliviousQueue {
@@ -150,3 +123,5 @@ public:
         return true;
     }
 };
+
+#endif // OB_QUEUE_HPP

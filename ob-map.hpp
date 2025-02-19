@@ -19,6 +19,9 @@
 //
 // ---------------------------------------------------------------------
 
+#ifndef OB_MAP_HPP
+#define OB_MAP_HPP
+
 // openSSL is being used to improve cryptographic security
 // it will help us simulate dummy accesses in this file.
 #include <iostream>
@@ -137,3 +140,5 @@ public:
          std::cout << "[ObliviousMap] Removed key: " << key << "\n";
     }
 };
+
+#endif // OB_MAP_HPP

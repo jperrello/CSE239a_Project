@@ -11,7 +11,7 @@ ENV NS3_PATH=${NDNSIM_PATH}/ns-3
 # Check out to the used build of ns-3
 WORKDIR ${NS3_PATH}
 RUN git pull --all \
-		&& git checkout 173aec9e080c71e75cca67fb3088834a52f4956a
+    && git checkout 173aec9e080c71e75cca67fb3088834a52f4956a
 
 # Configure pybindgen
 WORKDIR ${NDNSIM_PATH}/pybindgen
@@ -41,36 +41,36 @@ USER root
 # --- (optional for setting up visualization) ---
 # GTK and X11 support for visualization
 RUN sed -i '/cloud.r-project.org/d' /etc/apt/sources.list && \
-apt-key adv --keyserver keyserver.ubuntu.com --recv-keys E298A3A825C0D65DFD57CBB651716619E084DAB9
+    apt-key adv --keyserver keyserver.ubuntu.com --recv-keys E298A3A825C0D65DFD57CBB651716619E084DAB9
 
 # Install Python 2.7 and required packages
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
-python2.7 \
-python2.7-dev \
-python-is-python2 \
-graphviz \
-libgraphviz-dev \
-pkg-config \
-libcairo2-dev \
-libgirepository1.0-dev \
-gir1.2-gtk-3.0 \
-gir1.2-goocanvas-2.0 \
-python3-pip \
-curl \
-x11-apps \
-&& apt-get clean \
-&& rm -rf /var/lib/apt/lists/*
+    python2.7 \
+    python2.7-dev \
+    python-is-python2 \
+    graphviz \
+    libgraphviz-dev \
+    pkg-config \
+    libcairo2-dev \
+    libgirepository1.0-dev \
+    gir1.2-gtk-3.0 \
+    gir1.2-goocanvas-2.0 \
+    python3-pip \
+    curl \
+    x11-apps \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
 # Install pip for Python 2
 RUN curl https://bootstrap.pypa.io/pip/2.7/get-pip.py --output get-pip.py && \
-python2.7 get-pip.py && \
-rm get-pip.py
+    python2.7 get-pip.py && \
+    rm get-pip.py
 
 # Install Python 2 packages via pip
 RUN pip2 install \
-pygraphviz \
-ipython==5.10.0 \
-pygobject
+    pygraphviz \
+    ipython==5.10.0 \
+    pygobject
 
 RUN ./waf install && ldconfig
 # Fix for potential issues with library paths
@@ -79,26 +79,24 @@ USER ndn
 
 # --- End Setup ---
 
-# --- Add baseline code ---
+# --- Add simulation code ---
 
 # Switch to root
 USER root
 
-
 WORKDIR /app
 
-COPY baseline-ndn-simulation.cpp .
+# Copy the new header and source files into the container
+COPY ob-map.hpp ob-queue.hpp ob-sim.cpp /app/
 
-RUN apt-get update && apt-get install -y build-essential
-#needed for ssl. I am putting this here so that it will be installed when compiling SIMULATION CODE. 
-# It will make sure OpenSSL (used in ob-map) will be built.
+# Install build tools and OpenSSL development libraries
 RUN apt-get update && apt-get install -y build-essential libssl-dev
 
-# Compile 
-RUN g++ baseline-ndn-simulation.cpp -o baseline-ndn-simulation
+# Compile ob-sim.cpp, linking against OpenSSL libraries
+RUN g++ ob-sim.cpp -o ob-sim -lssl -lcrypto
 
 # Switch back to the non-root user
 USER ndn
 
-# Set default command
-CMD ["/app/baseline-ndn-simulation"]
+# Set default command to run the simulation
+CMD ["/app/ob-sim"]
