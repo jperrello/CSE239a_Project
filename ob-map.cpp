@@ -99,7 +99,7 @@ public:
     void oblivious_insert(const K & key, const V & value) {
          // Real insertion.
          data[key] = value;
-         // Perform dummy operations to obfuscate the real access pattern.
+         // Perform dummy ops to obfuscate the real access pattern.
          perform_map_dummy(data, 5);
          perform_extra_dummy();
          std::cout << "[ObliviousMap] Inserted key: " << key << "\n";

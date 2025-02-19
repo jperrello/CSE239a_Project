@@ -114,10 +114,10 @@ public:
         tail = (tail + 1) % capacity;
         count++;
 
-        // Perform dummy operations:
+        // Perform dummy ops:
         // 1. Simulate buffer access with random reads.
         perform_buffer_dummy(buffer, head, count, capacity, 5);
-        // 2. Execute extra dummy computations.
+        // 2. Execute extra dummy
         perform_extra_dummy();
 
         std::cout << "[ObliviousQueue] Pushed item. Queue size: " << count << "\n";
@@ -141,7 +141,7 @@ public:
         // 2. Execute extra dummy computations.
         perform_extra_dummy();
 
-        // Retrieve the item at the head position.
+        // Retrieve the head.
         item = buffer[head];
         head = (head + 1) % capacity;
         count--;
