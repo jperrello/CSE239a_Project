@@ -1,6 +1,6 @@
 FROM emrevoid/ndnsim-os:ubuntu-20.04
 
-LABEL mantainer="Casadei Andrea <andrea.casadei22@studio.unibo.it>, Margotta Fabrizio <fabrizio.margotta@studio.unibo.it>"
+LABEL maintainer="Casadei Andrea <andrea.casadei22@studio.unibo.it>, Margotta Fabrizio <fabrizio.margotta@studio.unibo.it>"
 
 # Utility environment variables
 ENV NDNSIM_PATH=${HOME}/ndnSIM
@@ -33,8 +33,6 @@ ENV LD_LIBRARY_PATH=/usr/local/lib
 
 # Configure, compile, and install ndnSIM
 WORKDIR ${NS3_PATH}
-# (Optional) Change visualizer default speed:
-# RUN sed -e 's/speed_adj = gtk.Adjustment(1.0/speed_adj = gtk.Adjustment(0.4/g' -i ./src/visualizer/visualizer/core.py
 RUN ./waf configure -d optimized && ./waf
 USER root
 
@@ -86,17 +84,24 @@ USER root
 
 WORKDIR /app
 
-# Copy the new header and source files into the container
-COPY ob-map.hpp ob-queue.hpp ob-sim.cpp /app/
+# Copy the new header and source files into the container.
+# The destination is a directory (ending with a slash) so Docker knows where to place the files.
+COPY ob-map.hpp ob-queue.hpp test-ndn-router.cpp /app/
 
-# Install build tools and OpenSSL development libraries
+# Install build tools and OpenSSL development libraries.
 RUN apt-get update && apt-get install -y build-essential libssl-dev
 
-# Compile ob-sim.cpp, linking against OpenSSL libraries
-RUN g++ ob-sim.cpp -o ob-sim -lssl -lcrypto
+RUN apt-get update && apt-get install -y libgtest-dev cmake && \
+    cd /usr/src/gtest && \
+    cmake . && \
+    make && \
+    cp ./lib/*.a /usr/lib
+
+# Compile the simulation code (linking against OpenSSL libraries if needed)
+RUN g++ test-ndn-router.cpp -o test-ndn-router -lssl -lcrypto -lgtest -lgtest_main -pthread
 
 # Switch back to the non-root user
 USER ndn
 
-# Set default command to run the simulation
-CMD ["/app/ob-sim"]
+# Set default command to run the simulation executable
+CMD ["/app/test-ndn-router"]
