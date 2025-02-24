@@ -58,11 +58,41 @@ This is mainly for testing as Joey likes to see data visualized on a graph.
 
 ---
 
-## Next Steps
+## Oblivious Data Structs
+The following oblivious data structures are for Named Data Networking (NDN), focusing on security and privacy. The key components include an oblivious map, an oblivious queue, and unit tests for an NDN router.
 
-We need to scale this to realistic network simulations. We plan on using **ndnSIM** for this.
+1. ob-map.hpp - Oblivious Map for Secure FIB & PIT Operations
 
----
+    Implements an oblivious hash map to enhance security in NDN architectures.
+    Used for:
+        FIB (Forwarding Information Base): Hides the mapping between content names and forwarding interfaces to prevent traffic analysis.
+        PIT (Pending Interest Table): Tracks outstanding interest packets while preventing timing-based attacks.
+        
+    Security Features:
+        Dummy operations before and after real accesses to obscure patterns.
+        Uses secure randomization to prevent adversary inference.
+        Supports potential integration with cryptographic techniques like ORAM.
+
+2. ob-queue.hpp - Oblivious Queue for Secure Content Caching (CS)
+
+    Implements an oblivious queue for content caching in NDN's Content Store (CS).
+
+    Designed to make push and pop operations indistinguishable through:
+        Randomized memory accesses to prevent timing-based inference.
+        Fixed-size circular buffer for efficient storage and retrieval.
+        Pre- and post-dummy operations to balance performance and security.
+
+3. test-ndn-router.cpp - Unit Tests for NDN Router
+
+    Implements GoogleTest-based unit tests for:
+        ObliviousMap (FIB & PIT): Tests insert, lookup, and removal security.
+        ObliviousQueue (CS): Ensures queue operations behave as expected, even under full or empty conditions.
+        NDN Router simulation: Tests how an NDN router processes interest and data packets using oblivious structures.
+
+    Integration Test: Simulates an NDN router handling:
+        Interest packets (checking PIT & FIB behavior).
+        Data packets (testing PIT expiration and CS caching).
+        Content serving (ensuring secure queue operations).
 
 ## Setting up the Docker Container
 
