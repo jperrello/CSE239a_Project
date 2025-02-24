@@ -99,19 +99,8 @@ The following oblivious data structures are for Named Data Networking (NDN), foc
 to build:   `docker build -t ndnsim-with-sim`
 to run:     `docker run --rm ndnsim-with-sim`
 
-
-Optionally, to run with visualization enabled:
+### Optionally, to run with visualization enabled (we've not finished integrating this functionality with our experiment):
 
 1. First, start an X11 server on your machine. In Windows, install and run **VcXsrv** (https://sourceforge.net/projects/vcxsrv/).
 2. Then run the Docker container with X11 port forwarding enabled:  
 `docker run -it --env DISPLAY=host.docker.internal:0 -v /tmp/.X11-unix:/temp/.X11-unix ndnsim-with-sim`
-
-## Using the Docker Container to run an experiment
-
-Prepare the container to run experiments first
-`./waf configure` optionally to use the built in examples add `--enable-examples`
-then use `./waf` to compile
-now to run an experiment
-`./waf run=<experiment>`, for example: `./waf run=ndn-simple`
-to run an experiment with visualization using X11 run the experiment with the option enabled
-`./waf run=<experiment> --vis`
