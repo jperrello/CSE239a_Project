@@ -84,24 +84,30 @@ USER root
 
 WORKDIR /app
 
-# Copy the new header and source files into the container.
-# The destination is a directory (ending with a slash) so Docker knows where to place the files.
-COPY ob-map.hpp ob-queue.hpp test-ndn-router.cpp /app/
+# Copy the new project header and source files into the container.
+# These files include our oblivious data structures and the extended test harness.
+COPY crypto.hpp tree-map.hpp tree-queue.hpp tree-test.cpp /app/
 
-# Install build tools and OpenSSL development libraries.
-RUN apt-get update && apt-get install -y build-essential libssl-dev
+# Install build tools, OpenSSL development libraries, and gprof for profiling.
+RUN apt-get update && apt-get install -y build-essential libssl-dev binutils
 
+# (Optional) Install Google Test libraries, kept from original setup.
 RUN apt-get update && apt-get install -y libgtest-dev cmake && \
     cd /usr/src/gtest && \
     cmake . && \
     make && \
     cp ./lib/*.a /usr/lib
 
-# Compile the simulation code (linking against OpenSSL libraries if needed)
-RUN g++ test-ndn-router.cpp -o test-ndn-router -lssl -lcrypto -lgtest -lgtest_main -pthread
+# Compile the simulation code (using tree-test.cpp) with threading and crypto support.
+RUN g++ -std=c++11 -pthread tree-test.cpp -o tree-test -lssl -lcrypto
 
-# Switch back to the non-root user
+# Expose port 12345 for the integration test (UDP-based network simulation).
+EXPOSE 12345
+
+# Switch back to the non-root user.
 USER ndn
 
-# Set default command to run the simulation executable
-CMD ["/app/test-ndn-router"]
+# Set default entrypoint to run the simulation executable,
+# and allow additional arguments to be passed in.
+ENTRYPOINT ["/app/tree-test"]
+CMD []
