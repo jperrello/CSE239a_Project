@@ -32,7 +32,7 @@ The baseline for this project should include:
 
 ---
 
-## Explanation of Current Code
+## Explanation of Baseline Code
 
 ### `InterestPacket` Class:
 Represents a request for content with a timestamp.
@@ -59,7 +59,7 @@ This is mainly for testing as Joey likes to see data visualized on a graph.
 ---
 
 ## Oblivious Data Structs
-The following oblivious data structures are for Named Data Networking (NDN), focusing on security and privacy. The key components include an oblivious map, an oblivious queue, and unit tests for an NDN router.
+The following oblivious data structures are for Named Data Networking (NDN), focusing on security and privacy. The key components include an oblivious map, an oblivious queue, and unit tests for an NDN router. These files were designed using concepts outlined in SPARTA for inspiration.
 
 1. ob-map.hpp - Oblivious Map for Secure FIB & PIT Operations
 
@@ -93,6 +93,70 @@ The following oblivious data structures are for Named Data Networking (NDN), foc
         Interest packets (checking PIT & FIB behavior).
         Data packets (testing PIT expiration and CS caching).
         Content serving (ensuring secure queue operations).
+
+## ORAM Implementation
+The code files outlined in this section were inspired by the articles and class content from weeks seven and eight. The files attempt to use ORAM techniques on the NDN router.
+
+1. crypto.hpp - Cryptographic Utility for Secure Data Handling
+
+Implements cryptographic primitives to secure stored data in NDN routers. Provides encryption and authentication for data blocks.
+
+    AES-256-CBC Encryption: Ensures secure data storage.
+    HMAC-SHA256 Integrity Check: Protects against data tampering.
+    Key Management: Generates secure random keys and IVs.
+
+Used in:
+
+    tree-map.hpp (to encrypt stored key-value pairs in FIB & PIT).
+    tree-queue.hpp (to encrypt cached content in the Content Store).
+
+2. tree-map.hpp - Oblivious Map for Secure FIB & PIT Operations
+
+Implements an oblivious hash map using a PathORAM-inspired structure to enhance privacy in NDN.
+
+    Used for:
+        FIB (Forwarding Information Base): Hides the mapping between content names and forwarding interfaces to prevent traffic analysis.
+        PIT (Pending Interest Table): Stores interest packets while preventing access pattern leakage.
+
+    Security Features:
+        Reads and writes entire access paths to prevent leakage.
+        Uses a stash to temporarily hold blocks before eviction.
+        Randomized leaf remapping to prevent repeated lookup pattern inference.
+
+3. tree-queue.hpp - Oblivious Queue for Secure Content Caching (CS)
+
+Implements an oblivious queue for the Content Store (CS) in an NDN router.
+
+    Designed to make push and pop operations indistinguishable:
+        Uses randomized access patterns to prevent timing inference.
+        Dummy operations interleaved with real reads and writes.
+        Implements a PathORAM-based eviction strategy.
+
+    Security Features:
+        Oblivious Push: Encrypts and inserts data while hiding order.
+        Oblivious Pop: Retrieves data without revealing request patterns.
+
+4. tree-test.cpp - Unit Tests & Simulation for the NDN Router
+
+Implements unit tests and a network simulation for the oblivious data structures.
+
+    NDNRouter Simulation:
+        Uses ObliviousMap for FIB & PIT operations.
+        Uses ObliviousQueue for CS caching.
+        Processes Interest Packets and Data Packets securely.
+
+    Testing Includes:
+        Unit Tests: Validate oblivious insertions, lookups, and caching.
+        Profiling Tests: Measures performance over thousands of iterations.
+        Integration Tests: Simulates real-world interest/data flow in an NDN router.
+        Parallel Testing: Runs multiple router instances in separate threads.
+        
+This ensures NDN consumer privacy through the following principles:
+
+    Oblivious FIB & PIT (tree-map.hpp): Prevents inference attacks on routing and interest tracking.
+    Oblivious Content Store (tree-queue.hpp): Hides content caching and retrieval patterns.
+    Strong Cryptography (crypto.hpp): Ensures data integrity and confidentiality.
+    Performance Optimization: Balances security with efficient router operation.
 
 ## Setting up the Docker Container
 
