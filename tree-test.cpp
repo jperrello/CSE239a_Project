@@ -43,6 +43,7 @@ public:
     NDNRouter()
       : FIB(TREE_HEIGHT, 100), PIT(TREE_HEIGHT, 100), CS(QUEUE_TREE_HEIGHT, 100)
     {
+        // Pre-populate the FIB with an example route.
         FIB.oblivious_insert("/example", "eth0");
     }
 
@@ -90,7 +91,7 @@ public:
 };
 
 // -------------------------
-// Parallel Test Harness (old simulation)
+// Parallel Test Harness
 // -------------------------
 void router_thread_func(NDNRouter& router, int thread_id) {
     try {
@@ -111,25 +112,27 @@ void router_thread_func(NDNRouter& router, int thread_id) {
 }
 
 // -------------------------
-// New Testing/Profiling Functions
+// Unit Tests
 // -------------------------
 void run_unit_tests() {
     std::cout << "Running unit tests...\n";
     NDNRouter router;
-    // Basic test: send an interest and check that the FIB lookup returns the pre-populated interface.
+    // Basic test: send an interest and check FIB lookup.
     InterestPacket interest{"/example", "unit_test_consumer"};
     router.handle_interest(interest);
     
-    // Test PIT insertion and lookup by sending data.
+    // Test PIT insertion and lookup.
     DataPacket data{"/example", "unit test data"};
     router.handle_data(data);
     Content served;
-    bool result = router.serve_content(served);
-    assert(result && "Unit test failed: Content was not served as expected.");
+    assert(router.serve_content(served) && "Unit test failed: Content was not served as expected.");
     
     std::cout << "Unit tests completed successfully.\n";
 }
 
+// -------------------------
+// Profiling Test
+// -------------------------
 void run_profiling_test() {
     std::cout << "Running profiling tests...\n";
     NDNRouter router;
@@ -148,6 +151,9 @@ void run_profiling_test() {
     std::cout << "Average time per iteration: " << (diff.count() / iterations) * 1000 << " ms\n";
 }
 
+// -------------------------
+// Integration Test (Simulated Network Traffic)
+// -------------------------
 void run_integration_test() {
     std::cout << "Running integration test with simulated network traffic...\n";
     // Start a simple UDP server in a separate thread.
@@ -181,10 +187,10 @@ void run_integration_test() {
          close(sockfd);
     });
 
-    // Give the server time to start.
+    // Allow the server some time to start.
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
-    // Start the client to send a test UDP packet.
+    // Client: send a test UDP packet.
     int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
     if (sockfd < 0) {
          std::cerr << "Client socket creation failed.\n";
@@ -204,7 +210,7 @@ void run_integration_test() {
 }
 
 // -------------------------
-// Main: Dispatch test mode based on command-line argument
+// Main Function: Dispatch based on Command-line Argument
 // -------------------------
 int main(int argc, char* argv[]) {
     if (argc > 1) {

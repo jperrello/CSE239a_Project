@@ -10,16 +10,24 @@
 #include <string>
 #include <algorithm>
 #include <cassert>
-#include <mutex>              // For thread-safety
+#include <mutex>
 
-#include "crypto.hpp" // New crypto helper
+#include "crypto.hpp" 
 
 // -------------------------
 // Configuration Parameters
+// a height of 5 gives 2⁵ (or 32) leaves. This number is small enough to keep the overall tree structure 
+// manageable for testing while still illustrating the concept of random leaf assignments for obfuscation.
+//
+// a bucket capacity of 4 is a common academic starting point. It represents a trade-off: smaller buckets reduce
+// the amount of data read per path but may increase the chance of stash overflows if not carefully managed.
+//
+//The stash acts as temporary storage for blocks read from the ORAM until they are evicted back. Setting it at 100 aims
+// to minimize the risk of overflow during worst-case scenarios while keeping the simulation simple.
 // -------------------------
-constexpr int TREE_HEIGHT = 5;            // Height of the binary ORAM tree
-constexpr int BUCKET_CAPACITY = 4;          // Maximum number of blocks per bucket
-constexpr size_t STASH_LIMIT_DEFAULT = 100; // Maximum allowed blocks in the stash
+constexpr int TREE_HEIGHT = 5;            // Height of the binary ORAM tree.
+constexpr int BUCKET_CAPACITY = 4;          // Maximum number of blocks per bucket.
+constexpr size_t STASH_LIMIT_DEFAULT = 100; // Maximum allowed blocks in the stash.
 
 // -------------------------
 // Utility Functions
@@ -50,9 +58,9 @@ inline size_t secure_random_index(size_t range) {
 // Contains a key, an encrypted value, and a validity flag.
 template<typename K, typename V>
 struct Block {
-    bool valid;  // True if this block contains valid data; false indicates a dummy block.
+    bool valid;  // True if this block contains valid data; false indicates a dummy.
     K key;
-    V value;     // The stored value (encrypted)
+    V value;    
 
     // Default constructor creates an invalid (dummy) block.
     Block() : valid(false), key(), value() {}
@@ -62,7 +70,7 @@ struct Block {
 };
 
 // Bucket:
-// From my understanding, a bucket is a fixed-size container holding a vector of Blocks.
+// A fixed-size container holding a vector of Blocks.
 template<typename K, typename V>
 struct Bucket {
     std::vector<Block<K,V>> blocks;
@@ -77,32 +85,31 @@ struct Bucket {
 // ObliviousMap Class (PathORAM-based)
 // -------------------------
 // Implements an oblivious map using a PathORAM structure.
-// It provides oblivious insert and lookup operations by reading an entire path,
+// Provides oblivious insert and lookup operations by reading an entire path,
 // using a stash to temporarily hold blocks, and evicting blocks back to the tree.
 template<typename K, typename V>
 class ObliviousMap {
 private:
-    std::vector<Bucket<K,V>> tree;         // The ORAM tree stored as a vector of buckets (1-indexed)
-    int numBuckets;                        // Total number of buckets in the tree
-    int treeHeight;                        // Height of the tree 
-    std::vector<Block<K,V>> stash;         // The stash that temporarily holds blocks from accessed paths
-    size_t stashLimit;                     // Maximum allowed stash size
-    std::unordered_map<K, size_t> posMap;    // Client-side position map: maps keys to a random leaf index
-    mutable std::mutex mtx;                // Mutex to protect concurrent accesses
+    std::vector<Bucket<K,V>> tree;         // The ORAM tree stored as a vector of buckets (1-indexed).
+    int numBuckets;                        // Total number of buckets in the tree.
+    int treeHeight;                        // Height of the tree.
+    std::vector<Block<K,V>> stash;         // The stash temporarily holding blocks from accessed paths.
+    size_t stashLimit;                     // Maximum allowed stash size.
+    std::unordered_map<K, size_t> posMap;    // Client-side position map: maps keys to a random leaf index.
+    mutable std::mutex mtx;                // Mutex to protect concurrent accesses.
 
     // compute_numBuckets:
-    // Computes the total number of nodes (buckets) in a full binary tree of given height.
+    // Computes the total number of nodes/buckets in a full binary tree of given height.
     int compute_numBuckets(int height) {
         return (1 << (height + 1)) - 1;
     }
 
     // get_path_indices:
     // Computes and returns the indices (in the tree vector) of the buckets along the path
-    // from the root to the specified leaf (leaf index in [0, 2^treeHeight - 1]). I got this 
-    // num from lectur.
+    // from the root to the specified leaf (leaf index in [0, 2^treeHeight - 1]).
     std::vector<int> get_path_indices(size_t leaf) {
         std::vector<int> path;
-        // Leaves are stored starting at index (2^treeHeight, again from lecture)
+        // Calculate the index for the leaf in a 1-indexed tree.
         int index = (1 << treeHeight) - 1 + leaf;
         while (index > 0) {
             path.push_back(index);
@@ -114,13 +121,13 @@ private:
 
     // read_path:
     // Reads all buckets along the given path and moves their valid blocks into the stash.
-    // Throws an error if the stash exceeds its capacity.
+    // Marks the bucket slots as dummy after moving.
     void read_path(const std::vector<int>& path) {
         for (int idx : path) {
             for (auto& blk : tree[idx].blocks) {
                 if (blk.valid) {
                     stash.push_back(blk);
-                    blk.valid = false; // Mark bucket slot as dummy after moving block to stash.
+                    blk.valid = false; // Mark slot as dummy 
                 }
             }
         }
@@ -129,26 +136,23 @@ private:
         }
     }
 
-    // write_path (this function looks scary, but is fairly simple. just focus on comments):
-   // Evicts eligible blocks from the stash back into the buckets along the accessed path.
-    // This modified version repeatedly scans the path and evicts blocks until no more eligible
-    // blocks can be placed, which helps prevent the stash from growing too large.
+    // write_path:
+    // Evicts eligible blocks from the stash back into the buckets along the accessed path.
+    // Uses a multi-pass eviction strategy to help prevent the stash from growing too large.
     void write_path(const std::vector<int>& path) {
         bool evictionPerformed = true;
-        // Keep evicting while at least one block was moved in the last pass.
         while (evictionPerformed) {
             evictionPerformed = false;
             for (int idx : path) {
                 Bucket<K,V>& bucket = tree[idx];
                 // For each empty slot in the bucket...
                 for (auto& slot : bucket.blocks) {
-                    if (!slot.valid) { // empty slot found
+                    if (!slot.valid) {
                         // Search for an eligible block in the stash.
                         auto it = std::find_if(stash.begin(), stash.end(), [&](const Block<K,V>& blk) {
-                            if (!blk.valid) return false; // Skip dummy blocks (should not occur in stash)
+                            if (!blk.valid) return false;
                             size_t blockLeaf = posMap.count(blk.key) ? posMap[blk.key] : 0;
                             std::vector<int> blockPath = get_path_indices(blockLeaf);
-                            // If the current bucket index is on the block’s eligible path, it can be evicted here.
                             return std::find(blockPath.begin(), blockPath.end(), idx) != blockPath.end();
                         });
                         if (it != stash.end()) {
@@ -163,8 +167,7 @@ private:
     }
 
     // remap_key:
-    // Assigns a new random leaf to the key in the position map.
-    // Returns the new leaf.
+    // Assigns a new random leaf to the key in the position map and returns the new leaf.
     size_t remap_key(const K& key) {
         size_t newLeaf = secure_random_index(1 << treeHeight);
         posMap[key] = newLeaf;
@@ -178,64 +181,58 @@ public:
       : treeHeight(height), stashLimit(stash_limit)
     {
         numBuckets = compute_numBuckets(treeHeight);
-        tree.resize(numBuckets + 1); // Use 1-based indexing; index 0 is unused.
+        // Using 1-based indexing for the tree; index 0 remains unused. This simplifies arithmetic. 
+        tree.resize(numBuckets + 1);
     }
 
     // oblivious_insert:
     // Inserts a key-value pair into the oblivious map.
-    // The value is encrypted using the crypto function before storage.
-    // The operation performs a full-path read and then evicts blocks from the stash.
+    // Encrypts the value using the crypto function (AES-GCM) before storage.
+    // Performs a full-path read and then evicts blocks from the stash.
     void oblivious_insert(const K& key, const V& value) {
-        std::lock_guard<std::mutex> lock(mtx); // Lock for thread safety
+        std::lock_guard<std::mutex> lock(mtx); // Ensure thread safety.
 
         // Remap the key to a new random leaf.
         size_t leaf = remap_key(key);
-        // Compute the path from the root to the assigned leaf.
         std::vector<int> path = get_path_indices(leaf);
-        // Read the full path from the tree into the stash.
         read_path(path);
-        // Encrypt the value using our enhanced crypto routine.
+        // Encrypt the value.
         stash.push_back(Block<K,V>(key, secure_encrypt_string(value)));
         if (stash.size() > stashLimit) {
             throw std::runtime_error("Stash overflow after insertion");
         }
-        // Evict eligible blocks from the stash back into the tree.
         write_path(path);
     }
 
     // oblivious_lookup:
     // Searches for a key in the oblivious map.
-    // If found, the encrypted value is decrypted (using enhanced decryption) and returned via the output parameter.
-    // Also remaps the key (to hide repeated accesses).
+    // If found, decrypts the value and returns it.
+    // Also remaps the key to help break access linkability.
     bool oblivious_lookup(const K& key, V& value) {
-        std::lock_guard<std::mutex> lock(mtx); // Lock for thread safety
+        std::lock_guard<std::mutex> lock(mtx); // Ensure thread safety.
 
-        // If key is not in the position map, it was never inserted.
         if (posMap.find(key) == posMap.end()) {
             return false;
         }
         size_t leaf = posMap[key];
         std::vector<int> path = get_path_indices(leaf);
-        // Read the entire path into the stash.
         read_path(path);
         bool found = false;
-        // Search the stash for the key.
         for (const auto& blk : stash) {
             if (blk.valid && blk.key == key) {
-                // Decrypt the stored value using enhanced crypto.
+                // Decrypt the stored value.
                 value = secure_decrypt_string(blk.value);
                 found = true;
                 break;
             }
         }
-        // Remap the key to a new leaf to break linkability.
+        // Remap the key to break linkability.
         if (found) {
             remap_key(key);
         }
-        // Write back any eligible blocks from the stash.
         write_path(path);
         return found;
     }
 };
 
-#endif // TREE_MAP_HPP
+#endif 
