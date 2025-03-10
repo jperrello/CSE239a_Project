@@ -23,9 +23,9 @@
 //
 // the stash is the same size as tree-map for the same reasons
 // -------------------------
-constexpr int QUEUE_TREE_HEIGHT = 4;            // Height of the ORAM tree for the queue.
-constexpr int QUEUE_BUCKET_CAPACITY = 8;          // Maximum number of blocks per bucket in the queue tree.
-constexpr size_t QUEUE_STASH_LIMIT_DEFAULT = 100; // Maximum allowed stash size for the queue.
+constexpr int QUEUE_TREE_HEIGHT = 6;            // Height of the ORAM tree for the queue, up from 4.
+constexpr int QUEUE_BUCKET_CAPACITY = 12;          // Maximum number of blocks per bucket in the queue tree, up from 8.
+constexpr size_t QUEUE_STASH_LIMIT_DEFAULT = 500; // Maximum allowed stash size for the queue, up from 100.
 
 // -------------------------
 // QueueBlock and QueueBucket Structures

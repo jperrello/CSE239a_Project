@@ -1,3 +1,15 @@
+# Setting up the Docker Container
+
+to build the Docker container:   `docker build -t ndn-privacy-test .`
+to run:     `docker run -it --rm --cpus=4 --memory=8g -v "$(pwd)/results:/app/results" ndn-privacy test`
+
+# Running Experiments using the docker Container
+
+`./run_test.sh benchmark 100`
+`./run_test.sh treeheight`
+`./run_test.sh concurrency 16`
+
+
 # Deferred Retrieval in PBACN-ICN
 
 Our goal is to implement deferred retrieval in the context of PBACN-ICN, and modify how interest packets are fetched to obscure traffic patterns and prevent correlation attacks.
@@ -157,14 +169,3 @@ This ensures NDN consumer privacy through the following principles:
     Oblivious Content Store (tree-queue.hpp): Hides content caching and retrieval patterns.
     Strong Cryptography (crypto.hpp): Ensures data integrity and confidentiality.
     Performance Optimization: Balances security with efficient router operation.
-
-## Setting up the Docker Container
-
-to build:   `docker build -t ndnsim-with-sim`
-to run:     `docker run --rm ndnsim-with-sim`
-
-### Optionally, to run with visualization enabled (we've not finished integrating this functionality with our experiment):
-
-1. First, start an X11 server on your machine. In Windows, install and run **VcXsrv** (https://sourceforge.net/projects/vcxsrv/).
-2. Then run the Docker container with X11 port forwarding enabled:  
-`docker run -it --env DISPLAY=host.docker.internal:0 -v /tmp/.X11-unix:/temp/.X11-unix ndnsim-with-sim`

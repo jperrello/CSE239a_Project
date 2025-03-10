@@ -25,9 +25,9 @@
 //The stash acts as temporary storage for blocks read from the ORAM until they are evicted back. Setting it at 100 aims
 // to minimize the risk of overflow during worst-case scenarios while keeping the simulation simple.
 // -------------------------
-constexpr int TREE_HEIGHT = 5;            // Height of the binary ORAM tree.
-constexpr int BUCKET_CAPACITY = 4;          // Maximum number of blocks per bucket.
-constexpr size_t STASH_LIMIT_DEFAULT = 100; // Maximum allowed blocks in the stash.
+constexpr int TREE_HEIGHT = 7;            // Height of the binary ORAM tree, up from 5.
+constexpr int BUCKET_CAPACITY = 8;          // Maximum number of blocks per bucket, up from 4.
+constexpr size_t STASH_LIMIT_DEFAULT = 500; // Maximum allowed blocks in the stash, up from 100.
 
 // -------------------------
 // Utility Functions
