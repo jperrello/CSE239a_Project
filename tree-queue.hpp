@@ -11,21 +11,15 @@
 #include <cassert>
 #include <mutex>
 
-#include "crypto.hpp" 
+#include "crypto.hpp"
 
 // -------------------------
 // Configuration Parameters
-//
-// a height of 4 (16 leaves) was chosen to reflect a different usage pattern—often in a FIFO structure,
-// 
-// a bucket capacity of 8 is used, partly because the queue might see more bursty operations and require
-// storing more items temporarily. This helps in reducing the frequency of expensive path reads and evictions.
-//
-// the stash is the same size as tree-map for the same reasons
 // -------------------------
-constexpr int QUEUE_TREE_HEIGHT = 6;            // Height of the ORAM tree for the queue, up from 4.
-constexpr int QUEUE_BUCKET_CAPACITY = 12;          // Maximum number of blocks per bucket in the queue tree, up from 8.
-constexpr size_t QUEUE_STASH_LIMIT_DEFAULT = 500; // Maximum allowed stash size for the queue, up from 100.
+
+constexpr int QUEUE_TREE_HEIGHT = 6; // ORAM tree height for queue.
+constexpr int QUEUE_BUCKET_CAPACITY = 12; // Bucket capacity for queue.
+constexpr size_t QUEUE_STASH_LIMIT_DEFAULT = 500; // Maximum stash size.
 
 // -------------------------
 // QueueBlock and QueueBucket Structures
@@ -35,18 +29,19 @@ constexpr size_t QUEUE_STASH_LIMIT_DEFAULT = 500; // Maximum allowed stash size 
 // Represents an item in the queue. The item is stored as an encrypted string.
 template<typename T>
 struct QueueBlock {
-    bool valid;  // Indicates whether this block holds valid data.
-    T data;      // The encrypted item.
-    
+    bool valid; // valid data
+    T data;     // Encrypted item.
+
     QueueBlock() : valid(false), data() {}
     QueueBlock(const T& d) : valid(true), data(d) {}
 };
 
-// QueueBucket:
-// A bucket in the ORAM tree for the queue, consisting of a fixed number of QueueBlocks.
+// A bucket in the queue tree, containing multiple blocks.
 template<typename T>
 struct QueueBucket {
     std::vector<QueueBlock<T>> blocks;
+
+    // Initializes with empty blocks.
     QueueBucket() {
         blocks.resize(QUEUE_BUCKET_CAPACITY);
     }
@@ -58,15 +53,16 @@ struct QueueBucket {
 // Implements a queue using a PathORAM-based approach.
 // The push and pop operations perform full-path accesses,
 // using a stash to buffer items, then evicting them back into the tree.
+
 template<typename T>
 class ObliviousQueue {
 private:
-    std::vector<QueueBucket<T>> tree;      // The ORAM tree for the queue (1-indexed).
-    int numBuckets;                        // Total number of buckets in the tree.
-    int treeHeight;                        // Height of the tree.
-    std::vector<QueueBlock<T>> stash;      // Stash to temporarily hold blocks.
-    size_t stashLimit;                     // Maximum allowed stash size.
-    mutable std::mutex mtx;                // Mutex for thread-safe operations.
+    std::vector<QueueBucket<T>> tree; // The ORAM tree for queue (1-indexed).
+    int numBuckets;                   // Total number of buckets.
+    int treeHeight;                    // ORAM tree height.
+    std::vector<QueueBlock<T>> stash;  // Stash for temporary storage.
+    size_t stashLimit;                 // Maximum stash size.
+    mutable std::mutex mtx;            // Mutex for thread safety.
 
     // compute_numBuckets:
     // Computes the total number of nodes in a full binary tree of given height.
@@ -104,15 +100,17 @@ private:
         }
     }
 
-    // write_path:
-    // Evicts items from the stash back into the buckets along the accessed path.
-    // Uses a multi-pass FIFO strategy to flush the stash.
+    // Evicts blocks from stash to tree along the path.
     void write_path(const std::vector<int>& path) {
-        bool evictionPerformed = true;
-        while(evictionPerformed && !stash.empty()) {
+        const int MAX_EVICTION_ATTEMPTS = 10;
+        int attempts = 0;
+        bool evictionPerformed;
+
+        do {
             evictionPerformed = false;
             for (int idx : path) {
                 QueueBucket<T>& bucket = tree[idx];
+
                 for (auto& slot : bucket.blocks) {
                     if (!slot.valid && !stash.empty()) {
                         slot = stash.front();
@@ -121,40 +119,36 @@ private:
                     }
                 }
             }
-        }
+            attempts++;
+        } while (evictionPerformed && attempts < MAX_EVICTION_ATTEMPTS);
     }
 
 public:
-    // Constructor:
-    // Initializes the ORAM tree for the queue and sets the stash limit.
+    // Constructor: Initializes ORAM queue tree and stash limit.
     ObliviousQueue(int height = QUEUE_TREE_HEIGHT, size_t stash_limit = QUEUE_STASH_LIMIT_DEFAULT)
-      : treeHeight(height), stashLimit(stash_limit)
-    {
+        : treeHeight(height), stashLimit(stash_limit) {
         numBuckets = compute_numBuckets(treeHeight);
-        tree.resize(numBuckets + 1); // Use 1-based indexing.
+        tree.resize(numBuckets + 1);
     }
 
     // oblivious_push:
     // Pushes an item into the queue.
     // Encrypts the item using the updated crypto function (AES-GCM) before enqueuing.
     void oblivious_push(const T& item) {
-        std::lock_guard<std::mutex> lock(mtx); // Ensure thread safety.
+        std::lock_guard<std::mutex> lock(mtx);
 
         size_t leaf = secure_random_index(1 << treeHeight);
         std::vector<int> path = get_path_indices(leaf);
         read_path(path);
-        // Encrypt the item before pushing.
+
         stash.push_back(QueueBlock<T>(secure_encrypt_string(item)));
+
         if (stash.size() > stashLimit) {
             throw std::runtime_error("Stash overflow after push in queue");
         }
         write_path(path);
     }
-
-    // oblivious_pop:
-    // Pops an item from the queue.
-    // If an item is found, it is decrypted and returned.
-    // Returns true if an item was successfully popped; false otherwise.
+    
     bool oblivious_pop(T& item) {
         std::lock_guard<std::mutex> lock(mtx); // Ensure thread safety.
 
@@ -175,4 +169,5 @@ public:
     }
 };
 
-#endif 
+#endif
+
