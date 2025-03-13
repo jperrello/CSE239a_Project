@@ -16,10 +16,9 @@
 // -------------------------
 // Configuration Parameters
 // -------------------------
-
-constexpr int QUEUE_TREE_HEIGHT = 6; // ORAM tree height for queue.
-constexpr int QUEUE_BUCKET_CAPACITY = 12; // Bucket capacity for queue.
-constexpr size_t QUEUE_STASH_LIMIT_DEFAULT = 500; // Maximum stash size.
+constexpr int QUEUE_TREE_HEIGHT_DEFAULT = 4;       // Default height of the ORAM tree for the queue
+constexpr int QUEUE_BUCKET_CAPACITY_DEFAULT = 8;   // Default maximum number of blocks per bucket
+constexpr size_t QUEUE_STASH_LIMIT_DEFAULT = 100;  // Default maximum allowed stash size
 
 // -------------------------
 // QueueBlock and QueueBucket Structures
@@ -40,10 +39,9 @@ struct QueueBlock {
 template<typename T>
 struct QueueBucket {
     std::vector<QueueBlock<T>> blocks;
-
-    // Initializes with empty blocks.
-    QueueBucket() {
-        blocks.resize(QUEUE_BUCKET_CAPACITY);
+    
+    QueueBucket(int capacity = QUEUE_BUCKET_CAPACITY_DEFAULT) {
+        blocks.resize(capacity);
     }
 };
 
@@ -57,12 +55,13 @@ struct QueueBucket {
 template<typename T>
 class ObliviousQueue {
 private:
-    std::vector<QueueBucket<T>> tree; // The ORAM tree for queue (1-indexed).
-    int numBuckets;                   // Total number of buckets.
-    int treeHeight;                    // ORAM tree height.
-    std::vector<QueueBlock<T>> stash;  // Stash for temporary storage.
-    size_t stashLimit;                 // Maximum stash size.
-    mutable std::mutex mtx;            // Mutex for thread safety.
+    std::vector<QueueBucket<T>> tree;      // The ORAM tree for the queue (1-indexed).
+    int numBuckets;                        // Total number of buckets in the tree.
+    int treeHeight;                        // Height of the tree.
+    std::vector<QueueBlock<T>> stash;      // Stash to temporarily hold blocks.
+    size_t stashLimit;                     // Maximum allowed stash size.
+    int bucketCapacity;                    // Bucket capacity (blocks per bucket)
+    mutable std::mutex mtx;                // Mutex for thread-safe operations.
 
     // compute_numBuckets:
     // Computes the total number of nodes in a full binary tree of given height.
@@ -124,11 +123,20 @@ private:
     }
 
 public:
-    // Constructor: Initializes ORAM queue tree and stash limit.
-    ObliviousQueue(int height = QUEUE_TREE_HEIGHT, size_t stash_limit = QUEUE_STASH_LIMIT_DEFAULT)
-        : treeHeight(height), stashLimit(stash_limit) {
+    // Constructor:
+    // Initializes the ORAM tree for the queue and sets the stash limit.
+    ObliviousQueue(int height = QUEUE_TREE_HEIGHT_DEFAULT, 
+                   size_t stash_limit = QUEUE_STASH_LIMIT_DEFAULT,
+                   int bucket_capacity = QUEUE_BUCKET_CAPACITY_DEFAULT)
+      : treeHeight(height), stashLimit(stash_limit), bucketCapacity(bucket_capacity)
+    {
         numBuckets = compute_numBuckets(treeHeight);
-        tree.resize(numBuckets + 1);
+        tree.resize(numBuckets + 1); // Use 1-based indexing.
+        
+        // Initialize buckets with the specified capacity
+        for (int i = 1; i <= numBuckets; i++) {
+            tree[i] = QueueBucket<T>(bucketCapacity);
+        }
     }
 
     // oblivious_push:
@@ -167,6 +175,17 @@ public:
         write_path(path);
         return found;
     }
+    
+    // Get current stash size for metrics
+    size_t getStashSize() const {
+        std::lock_guard<std::mutex> lock(mtx);
+        return stash.size();
+    }
+    
+    // Get parameters for metrics
+    int getTreeHeight() const { return treeHeight; }
+    int getBucketCapacity() const { return bucketCapacity; }
+    size_t getStashLimit() const { return stashLimit; }
 };
 
 #endif

@@ -2,489 +2,547 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
-from matplotlib.ticker import ScalarFormatter
-import os
+from matplotlib.gridspec import GridSpec
 
-def load_metric_data(filepath):
-    """Load and organize the router metrics from CSV file"""
-    # Read the CSV as a simple two-column dataset
-    df = pd.read_csv(filepath)
-    
-    # Extract aggregated metrics (key-value pairs at the top of the file)
-    aggregated_metrics = {}
-    for _, row in df.iterrows():
-        if pd.notna(row['Metric']) and pd.notna(row['Value']):
-            aggregated_metrics[row['Metric']] = row['Value']
-        if row['Metric'] == 'PeakMemoryUsageMB':
-            # This is typically the last row before raw data
-            break
-    
-    # Extract raw latency data
-    raw_data = {'interest': [], 'data': [], 'retrieval': []}
-    current_section = None
-    
-    # Re-read the file to handle the raw data sections properly
-    with open(filepath, 'r') as f:
-        lines = f.readlines()
-        
-    for line in lines:
-        line = line.strip()
-        if 'Raw Interest Latencies' in line:
-            current_section = 'interest'
-            continue
-        elif 'Raw Data Latencies' in line:
-            current_section = 'data'
-            continue
-        elif 'Raw Retrieval Latencies' in line:
-            current_section = 'retrieval'
-            continue
-        
-        if current_section and line and line[0].isdigit():
-            try:
-                value = float(line)
-                raw_data[current_section].append(value)
-            except ValueError:
-                pass
-    
-    return {
-        'aggregated': aggregated_metrics,
-        'raw': raw_data
-    }
+# Set style
+plt.style.use('ggplot')
+sns.set_palette("colorblind")
+plt.rcParams['font.size'] = 12
+plt.rcParams['figure.figsize'] = (12, 8)
 
-def plot_bar_comparison(baseline_metrics, oblivious_metrics, metric_names, title, ylabel, log_scale=False):
-    """Create a bar chart comparing metrics between baseline and oblivious routers"""
-    fig, ax = plt.subplots(figsize=(10, 6))
+def load_and_clean_data(file_path):
+    """Load a CSV file and handle potential formatting issues."""
+    try:
+        # For files with 'Metric,Value' format
+        if 'operations_' in file_path or 'baseline_' in file_path or 'privacy_' in file_path or 'config_th' in file_path:
+            df = pd.read_csv(file_path)
+            # Convert to key-value pairs if needed
+            if 'Metric' in df.columns and 'Value' in df.columns:
+                # Extract metrics into a dictionary
+                metrics = {}
+                for _, row in df.iterrows():
+                    try:
+                        # Try to convert to float if possible
+                        metrics[row['Metric']] = float(row['Value'])
+                    except (ValueError, TypeError):
+                        # Keep as string if not convertible
+                        metrics[row['Metric']] = row['Value']
+                return pd.Series(metrics)
+            return df
+        # For other formats
+        else:
+            return pd.read_csv(file_path)
+    except Exception as e:
+        print(f"Error loading {file_path}: {e}")
+        return None
+
+def plot_baseline_comparison(baseline_comp_path='baseline_comparison.csv'):
+    """Plot comparison between baseline and privacy implementations."""
+    print(f"Plotting baseline comparison from: {baseline_comp_path}")
     
-    x = np.arange(len(metric_names))
+    # Load data
+    df = load_and_clean_data(baseline_comp_path)
+    if df is None or df.empty:
+        print("No data found for baseline comparison")
+        return
+    
+    fig = plt.figure(figsize=(16, 10))
+    gs = GridSpec(2, 3, figure=fig)
+    
+    # Plot 1: Throughput comparison
+    ax1 = fig.add_subplot(gs[0, 0])
+    x = df['OperationCount'].astype(str)
     width = 0.35
+    ax1.bar(np.arange(len(x)) - width/2, df['BaselineThroughput'], width, label='Baseline')
+    ax1.bar(np.arange(len(x)) + width/2, df['PrivacyThroughput'], width, label='Privacy')
+    ax1.set_xlabel('Operation Count')
+    ax1.set_ylabel('Throughput (ops/sec)')
+    ax1.set_title('Throughput Comparison')
+    ax1.set_xticks(np.arange(len(x)))
+    ax1.set_xticklabels(x)
+    ax1.legend()
+    ax1.set_yscale('log')  # Log scale due to large differences
     
-    baseline_values = [baseline_metrics[metric] for metric in metric_names]
-    oblivious_values = [oblivious_metrics[metric] for metric in metric_names]
+    # Plot 2: Latency comparisons
+    ax2 = fig.add_subplot(gs[0, 1])
+    metrics = ['InterestLatency', 'DataLatency', 'RetrievalLatency']
     
-    rects1 = ax.bar(x - width/2, baseline_values, width, label='Baseline Router', color='#3498db')
-    rects2 = ax.bar(x + width/2, oblivious_values, width, label='Oblivious Router', color='#e74c3c')
+    width = 0.35
+    ind = np.arange(len(metrics))
     
-    # Set a reasonable y-limit if using log scale to prevent excessive figure height
-    if log_scale and min(baseline_values + oblivious_values) > 0:
-        ax.set_yscale('log')
-        ax.yaxis.set_major_formatter(ScalarFormatter())
+    # Use the first operation count (usually smaller for better visibility)
+    op_idx = 0
+    ax2.bar(ind - width/2, [df[f'Baseline{m}'].iloc[op_idx] for m in metrics], width, label='Baseline')
+    ax2.bar(ind + width/2, [df[f'Privacy{m}'].iloc[op_idx] for m in metrics], width, label='Privacy')
+    
+    ax2.set_xlabel('Latency Type')
+    ax2.set_ylabel('Latency (μs)')
+    ax2.set_title(f'Latency Comparison (Op Count: {df["OperationCount"].iloc[op_idx]})')
+    ax2.set_xticks(ind)
+    ax2.set_xticklabels(metrics)
+    ax2.legend()
+    
+    # Plot 3: Overhead factors
+    ax3 = fig.add_subplot(gs[0, 2])
+    overhead_metrics = ['ThroughputOverhead', 'InterestLatencyOverhead', 
+                         'DataLatencyOverhead', 'RetrievalLatencyOverhead']
+    overhead_labels = ['Throughput', 'Interest\nLatency', 'Data\nLatency', 'Retrieval\nLatency']
+    
+    for i, op_count in enumerate(df['OperationCount']):
+        values = [df[metric].iloc[i] for metric in overhead_metrics]
+        ax3.bar(np.arange(len(overhead_metrics)) + i*width, values, width, 
+                label=f'{op_count} ops')
+    
+    ax3.set_xlabel('Metric')
+    ax3.set_ylabel('Overhead Factor (×)')
+    ax3.set_title('Performance Overhead Factors')
+    ax3.set_xticks(np.arange(len(overhead_metrics)) + width/2)
+    ax3.set_xticklabels(overhead_labels)
+    ax3.legend()
+    
+    # Plot 4: Memory usage
+    ax4 = fig.add_subplot(gs[1, 0])
+    ax4.bar(np.arange(len(x)) - width/2, df['BaselineMemoryMB'], width, label='Baseline')
+    ax4.bar(np.arange(len(x)) + width/2, df['PrivacyMemoryMB'], width, label='Privacy')
+    ax4.set_xlabel('Operation Count')
+    ax4.set_ylabel('Memory Usage (MB)')
+    ax4.set_title('Memory Usage Comparison')
+    ax4.set_xticks(np.arange(len(x)))
+    ax4.set_xticklabels(x)
+    ax4.legend()
+    
+    # Plot 5: Detailed latency for higher operation count
+    if len(df) > 1:
+        ax5 = fig.add_subplot(gs[1, 1])
+        op_idx = 1  # Use the larger operation count
+        ax5.bar(ind - width/2, [df[f'Baseline{m}'].iloc[op_idx] for m in metrics], width, label='Baseline')
+        ax5.bar(ind + width/2, [df[f'Privacy{m}'].iloc[op_idx] for m in metrics], width, label='Privacy')
         
-        # Set upper limit to avoid excessive vertical size
-        max_val = max(baseline_values + oblivious_values)
-        min_val = min(val for val in baseline_values + oblivious_values if val > 0)
-        ax.set_ylim(min_val * 0.5, max_val * 5)  # Reasonable padding
+        ax5.set_xlabel('Latency Type')
+        ax5.set_ylabel('Latency (μs)')
+        ax5.set_title(f'Latency Comparison (Op Count: {df["OperationCount"].iloc[op_idx]})')
+        ax5.set_xticks(ind)
+        ax5.set_xticklabels(metrics)
+        ax5.legend()
     
-    # Add text labels above bars with controlled positioning
-    for i, rect in enumerate(rects1):
-        height = rect.get_height()
-        if height <= 0:  # Skip labels for zero or negative values
-            continue
-            
-        value_text = f"{baseline_values[i]:.2f}"
-        if log_scale:
-            # Position text at a fixed ratio above bar in log scale
-            y_pos = min(height * 1.5, ax.get_ylim()[1] * 0.9)
-        else:
-            # Position text at fixed offset above bar in linear scale
-            y_pos = height + 0.05 * (ax.get_ylim()[1] - ax.get_ylim()[0])
-            
-        ax.text(rect.get_x() + rect.get_width()/2., y_pos,
-                value_text, ha='center', va='bottom', fontsize=9, rotation=45)
+    plt.tight_layout()
+    plt.savefig('baseline_comparison.png', dpi=300, bbox_inches='tight')
+    plt.close()
     
-    for i, rect in enumerate(rects2):
-        height = rect.get_height()
-        if height <= 0:  # Skip labels for zero or negative values
-            continue
-            
-        value_text = f"{oblivious_values[i]:.2f}"
-        if log_scale:
-            # Position text at a fixed ratio above bar in log scale
-            y_pos = min(height * 1.5, ax.get_ylim()[1] * 0.9)
-        else:
-            # Position text at fixed offset above bar in linear scale
-            y_pos = height + 0.05 * (ax.get_ylim()[1] - ax.get_ylim()[0])
-            
-        ax.text(rect.get_x() + rect.get_width()/2., y_pos,
-                value_text, ha='center', va='bottom', fontsize=9, rotation=45)
+    print("Baseline comparison plot saved as 'baseline_comparison.png'")
+
+def plot_operations_benchmark(benchmark_path='operations_benchmark.csv'):
+    """Plot the impact of operation count on performance metrics."""
+    print(f"Plotting operations benchmark from: {benchmark_path}")
     
-    # Calculate and display the ratio text
-    for i in range(len(metric_names)):
-        if baseline_values[i] > 0:  # Avoid division by zero
-            ratio = oblivious_values[i] / baseline_values[i]
-            if ratio > 1:
-                ratio_text = f"{ratio:.2f}x slower"
-            else:
-                ratio_text = f"{1/ratio:.2f}x faster"
-            
-            # Position at bottom of chart
-            y_pos = ax.get_ylim()[0] * 1.1 if log_scale else ax.get_ylim()[0]
-            ax.text(i, y_pos, ratio_text, ha='center', va='bottom', fontsize=8,
-                   bbox=dict(facecolor='white', alpha=0.7, boxstyle='round,pad=0.3'))
+    # Load data
+    df = load_and_clean_data(benchmark_path)
+    if df is None or df.empty:
+        print("No data found for operations benchmark")
+        return
     
-    ax.set_ylabel(ylabel)
-    ax.set_title(title)
-    ax.set_xticks(x)
-    ax.set_xticklabels(metric_names, rotation=45, ha='right')
+    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+    
+    # Plot 1: Throughput vs Operation Count
+    axes[0, 0].plot(df['OperationCount'], df['ThroughputOpsPerSec'], 'o-', linewidth=2)
+    axes[0, 0].set_xlabel('Operation Count')
+    axes[0, 0].set_ylabel('Throughput (ops/sec)')
+    axes[0, 0].set_title('Throughput vs Operation Count')
+    axes[0, 0].set_xscale('log')
+    
+    # Plot 2: Latency vs Operation Count
+    ax = axes[0, 1]
+    ax.plot(df['OperationCount'], df['InterestLatencyMean'], 'o-', linewidth=2, label='Interest')
+    ax.plot(df['OperationCount'], df['DataLatencyMean'], 's-', linewidth=2, label='Data')
+    ax.plot(df['OperationCount'], df['RetrievalLatencyMean'], '^-', linewidth=2, label='Retrieval')
+    ax.set_xlabel('Operation Count')
+    ax.set_ylabel('Latency (μs)')
+    ax.set_title('Latency vs Operation Count')
+    ax.set_xscale('log')
     ax.legend()
     
-    fig.tight_layout()
-    return fig
+    # Plot 3: Max Stash Size vs Operation Count
+    axes[1, 0].plot(df['OperationCount'], df['MaxStashSize'], 'o-', linewidth=2)
+    axes[1, 0].set_xlabel('Operation Count')
+    axes[1, 0].set_ylabel('Max Stash Size')
+    axes[1, 0].set_title('Max Stash Size vs Operation Count')
+    axes[1, 0].set_xscale('log')
+    
+    # Plot 4: Total Time vs Operation Count
+    axes[1, 1].plot(df['OperationCount'], df['TotalTimeSeconds'], 'o-', linewidth=2)
+    axes[1, 1].set_xlabel('Operation Count')
+    axes[1, 1].set_ylabel('Total Time (seconds)')
+    axes[1, 1].set_title('Total Time vs Operation Count')
+    axes[1, 1].set_xscale('log')
+    axes[1, 1].set_yscale('log')
+    
+    plt.tight_layout()
+    plt.savefig('operations_benchmark.png', dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    print("Operations benchmark plot saved as 'operations_benchmark.png'")
 
-def plot_throughput_comparison(baseline_metrics, oblivious_metrics):
-    """Create a special bar chart for throughput comparison"""
-    fig, ax = plt.subplots(figsize=(8, 6))
+def plot_config_parameters(config_benchmark_path='config_benchmark_results.csv'):
+    """Plot the impact of different configuration parameters on performance."""
+    print(f"Plotting configuration parameters from: {config_benchmark_path}")
     
-    labels = ['Baseline Router', 'Oblivious Router']
-    values = [baseline_metrics['Throughput'], oblivious_metrics['Throughput']]
+    # Load data
+    df = load_and_clean_data(config_benchmark_path)
+    if df is None or df.empty:
+        print("No data found for configuration benchmark")
+        return
     
-    bars = ax.bar(labels, values, color=['#3498db', '#e74c3c'])
+    # Remove error rows
+    df = df[~df['Throughput'].astype(str).str.contains('ERROR')]
+    df['Throughput'] = pd.to_numeric(df['Throughput'], errors='coerce')
+    df = df.dropna(subset=['Throughput'])
     
-    # Add text labels above bars
-    for bar in bars:
-        height = bar.get_height()
-        ax.text(bar.get_x() + bar.get_width()/2., height * 1.01,
-                f'{height:.2f} ops/s', ha='center', va='bottom')
+    if df.empty:
+        print("No valid data points in configuration benchmark")
+        return
     
-    # Calculate slowdown factor
-    slowdown = baseline_metrics['Throughput'] / oblivious_metrics['Throughput']
-    ax.text(1, values[1] * 0.5, f"{slowdown:.2f}x slower", ha='center', 
-           bbox=dict(facecolor='white', alpha=0.7, boxstyle='round,pad=0.3'))
+    # Create figure
+    fig = plt.figure(figsize=(16, 12))
+    gs = GridSpec(2, 3, figure=fig)
     
-    ax.set_ylabel('Operations per Second')
-    ax.set_title('Throughput Comparison')
-    ax.set_ylim(0, max(values) * 1.2)
+    # Plot 1: Impact of Tree Height on Throughput
+    tree_height_df = df[(df['BucketCapacity'] == 4) & (df['StashLimit'] == 100)]
+    if not tree_height_df.empty:
+        ax1 = fig.add_subplot(gs[0, 0])
+        ax1.plot(tree_height_df['TreeHeight'], tree_height_df['Throughput'], 'o-', linewidth=2)
+        ax1.set_xlabel('Tree Height')
+        ax1.set_ylabel('Throughput (ops/sec)')
+        ax1.set_title('Tree Height vs Throughput', pad=20)
+        # Set integer ticks for x-axis
+        ax1.set_xticks(tree_height_df['TreeHeight'].unique())
+        
+        # Add second y-axis for latency
+        ax1_twin = ax1.twinx()
+        ax1_twin.plot(tree_height_df['TreeHeight'], tree_height_df['AvgInterestLatency'], 's--', color='red', linewidth=2)
+        ax1_twin.set_ylabel('Avg Interest Latency (μs)', color='red')
+        ax1_twin.tick_params(axis='y', labelcolor='red')
     
-    # Add log scale inset for better visualization
-    axins = ax.inset_axes([0.55, 0.55, 0.4, 0.4])
-    axins.bar(labels, values, color=['#3498db', '#e74c3c'])
-    axins.set_yscale('log')
-    axins.set_title('Log Scale', fontsize=9)
-    for i, v in enumerate(values):
-        axins.text(i, v * 1.1, f'{v:.2f}', ha='center', fontsize=8)
+    # Plot 2: Impact of Bucket Capacity on Throughput
+    bucket_capacity_df = df[(df['TreeHeight'] == 5) & (df['StashLimit'] == 100)]
+    if not bucket_capacity_df.empty:
+        ax2 = fig.add_subplot(gs[0, 1])
+        ax2.plot(bucket_capacity_df['BucketCapacity'], bucket_capacity_df['Throughput'], 'o-', linewidth=2)
+        ax2.set_xlabel('Bucket Capacity')
+        ax2.set_ylabel('Throughput (ops/sec)')
+        ax2.set_title('Bucket Capacity vs Throughput', pad=20)
+        # Set integer ticks for x-axis
+        ax2.set_xticks(bucket_capacity_df['BucketCapacity'].unique())
+        
+        # Add second y-axis for latency
+        ax2_twin = ax2.twinx()
+        ax2_twin.plot(bucket_capacity_df['BucketCapacity'], bucket_capacity_df['AvgInterestLatency'], 's--', color='red', linewidth=2)
+        ax2_twin.set_ylabel('Avg Interest Latency (μs)', color='red')
+        ax2_twin.tick_params(axis='y', labelcolor='red')
     
-    fig.tight_layout()
-    return fig
+    # Plot 3: Impact of Stash Limit on Throughput
+    stash_limit_df = df[(df['TreeHeight'] == 5) & (df['BucketCapacity'] == 4)]
+    if not stash_limit_df.empty:
+        ax3 = fig.add_subplot(gs[0, 2])
+        ax3.plot(stash_limit_df['StashLimit'], stash_limit_df['Throughput'], 'o-', linewidth=2)
+        ax3.set_xlabel('Stash Limit')
+        ax3.set_ylabel('Throughput (ops/sec)')
+        ax3.set_title('Stash Limit vs Throughput', pad=20)
+        
+        # Add second y-axis for max stash size
+        ax3_twin = ax3.twinx()
+        ax3_twin.plot(stash_limit_df['StashLimit'], stash_limit_df['MaxStashSize'], 's--', color='green', linewidth=2)
+        ax3_twin.set_ylabel('Max Stash Size', color='green')
+        ax3_twin.tick_params(axis='y', labelcolor='green')
+    
+    # Plot 4: Tree Height vs Latency Components
+    if not tree_height_df.empty:
+        ax4 = fig.add_subplot(gs[1, 0])
+        ax4.plot(tree_height_df['TreeHeight'], tree_height_df['AvgInterestLatency'], 'o-', linewidth=2, label='Interest')
+        ax4.plot(tree_height_df['TreeHeight'], tree_height_df['AvgDataLatency'], 's-', linewidth=2, label='Data')
+        ax4.plot(tree_height_df['TreeHeight'], tree_height_df['AvgRetrievalLatency'], '^-', linewidth=2, label='Retrieval')
+        ax4.set_xlabel('Tree Height')
+        ax4.set_ylabel('Latency (μs)')
+        ax4.set_title('Tree Height: Latency Components', pad=20)
+        ax4.set_xticks(tree_height_df['TreeHeight'].unique())
+        ax4.legend()
+    
+    # Plot 5: Bucket Capacity vs Latency Components
+    if not bucket_capacity_df.empty:
+        ax5 = fig.add_subplot(gs[1, 1])
+        ax5.plot(bucket_capacity_df['BucketCapacity'], bucket_capacity_df['AvgInterestLatency'], 'o-', linewidth=2, label='Interest')
+        ax5.plot(bucket_capacity_df['BucketCapacity'], bucket_capacity_df['AvgDataLatency'], 's-', linewidth=2, label='Data')
+        ax5.plot(bucket_capacity_df['BucketCapacity'], bucket_capacity_df['AvgRetrievalLatency'], '^-', linewidth=2, label='Retrieval')
+        ax5.set_xlabel('Bucket Capacity')
+        ax5.set_ylabel('Latency (μs)')
+        ax5.set_title('Bucket Capacity: Latency Components', pad=20)
+        ax5.set_xticks(bucket_capacity_df['BucketCapacity'].unique())
+        ax5.legend()
+    
+    # Plot 6: Stash Limit vs Latency Components
+    if not stash_limit_df.empty:
+        ax6 = fig.add_subplot(gs[1, 2])
+        ax6.plot(stash_limit_df['StashLimit'], stash_limit_df['AvgInterestLatency'], 'o-', linewidth=2, label='Interest')
+        ax6.plot(stash_limit_df['StashLimit'], stash_limit_df['AvgDataLatency'], 's-', linewidth=2, label='Data')
+        ax6.plot(stash_limit_df['StashLimit'], stash_limit_df['AvgRetrievalLatency'], '^-', linewidth=2, label='Retrieval')
+        ax6.set_xlabel('Stash Limit')
+        ax6.set_ylabel('Latency (μs)')
+        ax6.set_title('Stash Limit: Latency Components', pad=20)
+        ax6.legend()
+    
+    plt.tight_layout()
+    plt.savefig('config_parameters.png', dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    print("Configuration parameters plot saved as 'config_parameters.png'")
 
-def plot_latency_distribution(baseline_data, oblivious_data, latency_type, title):
-    """Create a density plot comparing the latency distributions"""
-    fig, ax = plt.subplots(figsize=(10, 6))
+def plot_config_details():
+    """Plot details of different configurations from individual config files."""
+    print("Plotting configuration details from individual files")
     
-    # Handle potential extreme outliers that could cause rendering issues
-    # Use percentiles to filter out extreme outliers for visualization purposes
-    baseline_filtered = np.array(baseline_data)
-    oblivious_filtered = np.array(oblivious_data)
+    # List of config files to analyze
+    config_files = [
+        'config_th5_bc4_sl100.csv',
+        'config_th5_bc4_sl200.csv',
+        'config_th5_bc4_sl500.csv',
+        'config_th5_bc8_sl100.csv',
+        'config_th5_bc16_sl100.csv',
+        'config_th6_bc4_sl100.csv',
+        'config_th7_bc4_sl100.csv'
+    ]
     
-    # For very skewed distributions, limit to 99.5th percentile for visualization
-    if len(baseline_filtered) > 10:
-        baseline_upper = np.percentile(baseline_filtered, 99.5)
-        baseline_filtered = baseline_filtered[baseline_filtered <= baseline_upper]
+    # Extract configuration parameters from filenames
+    configs = []
+    for file in config_files:
+        parts = file.replace('.csv', '').split('_')
+        # Check if filename follows expected pattern
+        if len(parts) >= 4 and parts[1].startswith('th') and parts[2].startswith('bc') and parts[3].startswith('sl'):
+            config = {
+                'file': file,
+                'tree_height': int(parts[1][2:]),
+                'bucket_capacity': int(parts[2][2:]),
+                'stash_limit': int(parts[3][2:])
+            }
+            
+            # Load the file data
+            series = load_and_clean_data(file)
+            if series is not None:
+                for metric in ['InterestLatencyMean', 'DataLatencyMean', 'RetrievalLatencyMean', 
+                               'Throughput', 'MaxStashSize', 'AvgStashSize']:
+                    if metric in series:
+                        config[metric] = series[metric]
+            
+            configs.append(config)
     
-    if len(oblivious_filtered) > 10:
-        oblivious_upper = np.percentile(oblivious_filtered, 99.5)
-        oblivious_filtered = oblivious_filtered[oblivious_filtered <= oblivious_upper]
+    if not configs:
+        print("No valid configuration files found or processed")
+        return
     
-    # Convert to DataFrames for easier plotting
-    df_baseline = pd.DataFrame({
-        'Latency': baseline_filtered,
-        'Router': 'Baseline'
-    })
+    # Create a DataFrame from the extracted configs
+    config_df = pd.DataFrame(configs)
     
-    df_oblivious = pd.DataFrame({
-        'Latency': oblivious_filtered,
-        'Router': 'Oblivious'
-    })
-    
-    df_combined = pd.concat([df_baseline, df_oblivious])
-    
-    # Plot KDE for both distributions
-    try:
-        sns.kdeplot(data=df_combined, x='Latency', hue='Router', fill=True, 
-                    common_norm=False, palette=['#3498db', '#e74c3c'], alpha=0.5, ax=ax)
-    except Exception as e:
-        print(f"Warning: KDE plot failed for {latency_type}, using histograms instead. Error: {e}")
-        # Fallback to histograms if KDE fails
-        ax.hist(baseline_filtered, alpha=0.5, color='#3498db', label='Baseline', bins=20, density=True)
-        ax.hist(oblivious_filtered, alpha=0.5, color='#e74c3c', label='Oblivious', bins=20, density=True)
-    
-    # Calculate statistics on original (unfiltered) data
-    baseline_mean = np.mean(baseline_data)
-    oblivious_mean = np.mean(oblivious_data)
-    
-    # Set reasonable x-axis limits to avoid rendering issues
-    if max(oblivious_data) / max(baseline_data) > 10:
-        ax.set_xscale('log')
-        ax.xaxis.set_major_formatter(ScalarFormatter())
-        
-        # Set sensible x limits based on filtered data
-        min_val = min(min(baseline_filtered), min(oblivious_filtered))
-        max_val = max(max(baseline_filtered), max(oblivious_filtered))
-        ax.set_xlim(min_val * 0.5, max_val * 2)
-    else:
-        # For non-log scale, set limits based on the 99.9th percentile
-        max_val = max(
-            np.percentile(baseline_filtered, 99.9) if len(baseline_filtered) > 0 else 0,
-            np.percentile(oblivious_filtered, 99.9) if len(oblivious_filtered) > 0 else 0
-        )
-        ax.set_xlim(0, max_val * 1.1)
-    
-    # Add vertical lines for means (of original data)
-    ax.axvline(baseline_mean, color='#3498db', linestyle='--', 
-               label=f'Baseline Mean: {baseline_mean:.2f} μs')
-    ax.axvline(oblivious_mean, color='#e74c3c', linestyle='--', 
-               label=f'Oblivious Mean: {oblivious_mean:.2f} μs')
-    
-    # Update legend to include mean lines
-    handles, labels = ax.get_legend_handles_labels()
-    ax.legend(handles=handles, labels=labels, title='Router Type')
-    
-    # Add annotation showing the difference
-    if baseline_mean > 0:  # Avoid division by zero
-        ratio = oblivious_mean / baseline_mean
-        ratio_text = f"Oblivious is {ratio:.2f}x slower"
-        
-        # Position the text in an appropriate spot within current axis limits
-        y_pos = ax.get_ylim()[1] * 0.9
-        x_pos = ax.get_xlim()[0] + (ax.get_xlim()[1] - ax.get_xlim()[0]) * 0.5
-        
-        ax.text(x_pos, y_pos, ratio_text, ha='center', va='top',
-                bbox=dict(facecolor='white', alpha=0.7, boxstyle='round,pad=0.3'))
-    
-    ax.set_xlabel('Latency (μs)')
-    ax.set_ylabel('Density')
-    ax.set_title(title)
-    
-    fig.tight_layout()
-    return fig
-
-def plot_latency_boxplot(baseline_data, oblivious_data, latency_type, title):
-    """Create a box plot comparing the latency distributions"""
-    fig, ax = plt.subplots(figsize=(10, 6))
-    
-    # Filter extreme outliers for visualization purposes (keep all data for statistics)
-    baseline_filtered = np.array(baseline_data)
-    oblivious_filtered = np.array(oblivious_data)
-    
-    # For very skewed distributions, limit to 99th percentile for visualization
-    if len(baseline_filtered) > 10:
-        baseline_upper = np.percentile(baseline_filtered, 99)
-        baseline_filtered = baseline_filtered[baseline_filtered <= baseline_upper]
-    
-    if len(oblivious_filtered) > 10:
-        oblivious_upper = np.percentile(oblivious_filtered, 99)
-        oblivious_filtered = oblivious_filtered[oblivious_filtered <= oblivious_upper]
-    
-    # Prepare data for plotting
-    df = pd.DataFrame({
-        'Baseline': baseline_filtered,
-        'Oblivious': oblivious_filtered
-    })
-    
-    # Create boxplot
-    sns.boxplot(data=df, palette=['#3498db', '#e74c3c'], ax=ax)
-    
-    # Add a more detailed swarm plot on top (limit points for clarity)
-    # Take a small random sample to avoid overcrowding
-    if len(baseline_filtered) > 0:
-        baseline_sample = np.random.choice(baseline_filtered, min(30, len(baseline_filtered)), replace=False)
-    else:
-        baseline_sample = []
-        
-    if len(oblivious_filtered) > 0:
-        oblivious_sample = np.random.choice(oblivious_filtered, min(30, len(oblivious_filtered)), replace=False)
-    else:
-        oblivious_sample = []
-    
-    if len(baseline_sample) > 0 or len(oblivious_sample) > 0:
-        sample_df = pd.DataFrame({
-            'Router': ['Baseline'] * len(baseline_sample) + ['Oblivious'] * len(oblivious_sample),
-            'Latency': np.concatenate([baseline_sample, oblivious_sample])
-        })
-        
-        sns.swarmplot(x='Router', y='Latency', data=sample_df, color='black', alpha=0.5, ax=ax)
-    
-    # Calculate statistics on the original data (not filtered)
-    baseline_mean = np.mean(baseline_data)
-    oblivious_mean = np.mean(oblivious_data)
-    baseline_median = np.median(baseline_data)
-    oblivious_median = np.median(oblivious_data)
-    
-    stats_text = (
-        f"Baseline - Mean: {baseline_mean:.2f} μs, Median: {baseline_median:.2f} μs\n"
-        f"Oblivious - Mean: {oblivious_mean:.2f} μs, Median: {oblivious_median:.2f} μs\n"
+    # Create a unique identifier for each configuration
+    config_df['config_id'] = config_df.apply(
+        lambda row: f"TH{row['tree_height']}-BC{row['bucket_capacity']}-SL{row['stash_limit']}", 
+        axis=1
     )
     
-    if baseline_mean > 0:  # Avoid division by zero
-        ratio = oblivious_mean / baseline_mean
-        stats_text += f"Mean Ratio: Oblivious is {ratio:.2f}x slower"
+    # Plot the results
+    fig, axes = plt.subplots(2, 2, figsize=(16, 12))
     
-    ax.text(0.5, 0.01, stats_text, transform=ax.transAxes, ha='center', va='bottom',
-            bbox=dict(facecolor='white', alpha=0.7, boxstyle='round,pad=0.3'))
+    # Plot 1: Throughput comparison
+    if 'Throughput' in config_df.columns:
+        sns.barplot(x='config_id', y='Throughput', data=config_df, ax=axes[0, 0], palette='viridis')
+        axes[0, 0].set_xlabel('Configuration')
+        axes[0, 0].set_ylabel('Throughput (ops/sec)')
+        axes[0, 0].set_title('Throughput Comparison Across Configurations')
+        axes[0, 0].set_xticklabels(axes[0, 0].get_xticklabels(), rotation=45, ha='right')
     
-    ax.set_ylabel('Latency (μs)')
-    ax.set_title(title)
+    # Plot 2: Latency comparison
+    latency_cols = [col for col in ['InterestLatencyMean', 'DataLatencyMean', 'RetrievalLatencyMean'] 
+                   if col in config_df.columns]
     
-    # Set sensible y-limits to prevent figure size issues
-    if max(oblivious_filtered) / max(baseline_filtered) > 10:
-        ax.set_yscale('log')
-        ax.yaxis.set_major_formatter(ScalarFormatter())
+    if latency_cols:
+        # Reshape for grouped bar plot
+        latency_data = []
+        for _, row in config_df.iterrows():
+            for col in latency_cols:
+                if pd.notna(row[col]):
+                    latency_data.append({
+                        'config_id': row['config_id'],
+                        'latency_type': col.replace('LatencyMean', ''),
+                        'value': row[col]
+                    })
         
-        # Set reasonable y limits
-        min_val = min(min(baseline_filtered) if len(baseline_filtered) > 0 else 0.1, 
-                     min(oblivious_filtered) if len(oblivious_filtered) > 0 else 0.1)
-        max_val = max(max(baseline_filtered) if len(baseline_filtered) > 0 else 1,
-                     max(oblivious_filtered) if len(oblivious_filtered) > 0 else 1)
-        
-        # Ensure positive values for log scale
-        min_val = max(0.1, min_val)
-        
-        ax.set_ylim(min_val * 0.5, max_val * 2)
-    else:
-        max_val = max(max(baseline_filtered) if len(baseline_filtered) > 0 else 0,
-                     max(oblivious_filtered) if len(oblivious_filtered) > 0 else 0)
-        ax.set_ylim(0, max_val * 1.2)
+        latency_df = pd.DataFrame(latency_data)
+        if not latency_df.empty:
+            sns.barplot(x='config_id', y='value', hue='latency_type', data=latency_df, ax=axes[0, 1], palette='muted')
+            axes[0, 1].set_xlabel('Configuration')
+            axes[0, 1].set_ylabel('Latency (μs)')
+            axes[0, 1].set_title('Latency Comparison Across Configurations')
+            axes[0, 1].set_xticklabels(axes[0, 1].get_xticklabels(), rotation=45, ha='right')
+            axes[0, 1].legend(title='Latency Type')
     
-    fig.tight_layout()
-    return fig
+    # Plot 3: Stash size comparison
+    stash_cols = [col for col in ['MaxStashSize', 'AvgStashSize'] if col in config_df.columns]
+    
+    if stash_cols:
+        # Reshape for grouped bar plot
+        stash_data = []
+        for _, row in config_df.iterrows():
+            for col in stash_cols:
+                if pd.notna(row[col]):
+                    stash_data.append({
+                        'config_id': row['config_id'],
+                        'stash_metric': col.replace('StashSize', ' Stash Size'),
+                        'value': row[col]
+                    })
+        
+        stash_df = pd.DataFrame(stash_data)
+        if not stash_df.empty:
+            sns.barplot(x='config_id', y='value', hue='stash_metric', data=stash_df, ax=axes[1, 0], palette='Set2')
+            axes[1, 0].set_xlabel('Configuration')
+            axes[1, 0].set_ylabel('Stash Size')
+            axes[1, 0].set_title('Stash Size Comparison Across Configurations')
+            axes[1, 0].set_xticklabels(axes[1, 0].get_xticklabels(), rotation=45, ha='right')
+            axes[1, 0].legend(title='Metric')
+    
+    # Plot 4: Heatmap of configuration parameters and performance
+    # Create a normalized version of key metrics for better visualization
+    if not config_df.empty and 'Throughput' in config_df.columns:
+        metrics_to_normalize = [col for col in ['Throughput', 'InterestLatencyMean', 'DataLatencyMean', 
+                                              'RetrievalLatencyMean', 'MaxStashSize'] 
+                               if col in config_df.columns]
+        
+        if metrics_to_normalize:
+            norm_df = config_df.copy()
+            for col in metrics_to_normalize:
+                if col == 'Throughput':
+                    # Higher throughput is better
+                    norm_df[f'{col}_norm'] = config_df[col] / config_df[col].max()
+                else:
+                    # Lower latency/stash size is better
+                    norm_df[f'{col}_norm'] = 1 - (config_df[col] / config_df[col].max())
+            
+            # Create a heatmap of normalized metrics
+            norm_cols = [f'{col}_norm' for col in metrics_to_normalize]
+            heatmap_df = norm_df.set_index('config_id')[norm_cols]
+            heatmap_df.columns = [col.replace('_norm', '') for col in heatmap_df.columns]
+            
+            if not heatmap_df.empty:
+                sns.heatmap(heatmap_df, annot=True, cmap='RdYlGn', ax=axes[1, 1])
+                axes[1, 1].set_title('Performance Metrics Across Configurations (Normalized)')
+                axes[1, 1].set_ylabel('Configuration')
+                # Higher values (green) indicate better performance
+                axes[1, 1].text(1.05, 0.5, "Higher is better", rotation=90, va='center', transform=axes[1, 1].transAxes)
+    
+    plt.tight_layout()
+    plt.savefig('config_details.png', dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    print("Configuration details plot saved as 'config_details.png'")
 
-def plot_memory_usage(baseline_metrics, oblivious_metrics):
-    """Create a bar chart comparing memory usage"""
-    fig, ax = plt.subplots(figsize=(8, 6))
+def plot_trade_off_analysis():
+    """Plot trade-off analysis between parameters."""
+    print("Plotting trade-off analysis")
     
-    labels = ['Baseline Router', 'Oblivious Router']
-    values = [baseline_metrics['PeakMemoryUsageMB'], oblivious_metrics['PeakMemoryUsageMB']]
+    # Load benchmark results
+    df = load_and_clean_data('config_benchmark_results.csv')
+    if df is None or df.empty:
+        print("No data found for trade-off analysis")
+        return
     
-    bars = ax.bar(labels, values, color=['#3498db', '#e74c3c'])
+    # Remove error rows
+    df = df[~df['Throughput'].astype(str).str.contains('ERROR')]
+    df['Throughput'] = pd.to_numeric(df['Throughput'], errors='coerce')
+    df = df.dropna(subset=['Throughput'])
     
-    # Add text labels above bars
-    for bar in bars:
-        height = bar.get_height()
-        ax.text(bar.get_x() + bar.get_width()/2., height * 1.01,
-                f'{height:.2f} MB', ha='center', va='bottom')
+    if df.empty:
+        print("No valid data points for trade-off analysis")
+        return
     
-    # Calculate ratio
-    ratio = oblivious_metrics['PeakMemoryUsageMB'] / baseline_metrics['PeakMemoryUsageMB']
-    ratio_text = f"Memory Ratio: {ratio:.2f}x"
+    # Create figure
+    fig, axes = plt.subplots(2, 2, figsize=(14, 12))
     
-    ax.text(0.5, 0.9, ratio_text, ha='center', va='center', transform=ax.transAxes,
-           bbox=dict(facecolor='white', alpha=0.7, boxstyle='round,pad=0.3'))
+    # Plot 1: Tree Height vs Throughput (different bucket capacities)
+    ax1 = axes[0, 0]
+    bucket_sizes = df['BucketCapacity'].unique()
+    for bc in bucket_sizes:
+        subset = df[(df['BucketCapacity'] == bc) & (df['StashLimit'] == 100)]
+        if not subset.empty:
+            ax1.plot(subset['TreeHeight'], subset['Throughput'], 'o-', 
+                     linewidth=2, label=f'BC={bc}')
     
-    ax.set_ylabel('Peak Memory Usage (MB)')
-    ax.set_title('Memory Overhead Comparison')
-    ax.set_ylim(0, max(values) * 1.2)
+    ax1.set_xlabel('Tree Height')
+    ax1.set_ylabel('Throughput (ops/sec)')
+    ax1.set_title('Tree Height vs Throughput (Different Bucket Capacities)')
+    if len(bucket_sizes) > 1:
+        ax1.legend(title='Bucket Capacity')
     
-    fig.tight_layout()
-    return fig
+    # Plot 2: Tree Height vs Interest Latency (different bucket capacities)
+    ax2 = axes[0, 1]
+    for bc in bucket_sizes:
+        subset = df[(df['BucketCapacity'] == bc) & (df['StashLimit'] == 100)]
+        if not subset.empty:
+            ax2.plot(subset['TreeHeight'], subset['AvgInterestLatency'], 'o-', 
+                     linewidth=2, label=f'BC={bc}')
+    
+    ax2.set_xlabel('Tree Height')
+    ax2.set_ylabel('Average Interest Latency (μs)')
+    ax2.set_title('Tree Height vs Interest Latency (Different Bucket Capacities)')
+    if len(bucket_sizes) > 1:
+        ax2.legend(title='Bucket Capacity')
+    
+    # Plot 3: Throughput vs Latency scatter plot
+    ax3 = axes[1, 0]
+    scatter = ax3.scatter(df['Throughput'], df['AvgInterestLatency'], 
+                         c=df['TreeHeight'], cmap='viridis', s=100, alpha=0.7)
+    
+    # Add labels to points
+    for i, row in df.iterrows():
+        ax3.annotate(f"TH{row['TreeHeight']},BC{row['BucketCapacity']}",
+                    (row['Throughput'], row['AvgInterestLatency']),
+                    xytext=(5, 5), textcoords='offset points',
+                    fontsize=8)
+    
+    ax3.set_xlabel('Throughput (ops/sec)')
+    ax3.set_ylabel('Average Interest Latency (μs)')
+    ax3.set_title('Throughput vs Latency Trade-off')
+    cbar = plt.colorbar(scatter, ax=ax3)
+    cbar.set_label('Tree Height')
+    
+    # Plot 4: Stash Limit impact on throughput and max stash size
+    stash_df = df[df['TreeHeight'] == 5][df['BucketCapacity'] == 4]
+    if not stash_df.empty:
+        ax4 = axes[1, 1]
+        ax4.plot(stash_df['StashLimit'], stash_df['Throughput'], 'o-', color='blue', linewidth=2)
+        ax4.set_xlabel('Stash Limit')
+        ax4.set_ylabel('Throughput (ops/sec)', color='blue')
+        ax4.tick_params(axis='y', labelcolor='blue')
+        
+        ax4_twin = ax4.twinx()
+        ax4_twin.plot(stash_df['StashLimit'], stash_df['MaxStashSize'], 's--', color='red', linewidth=2)
+        ax4_twin.set_ylabel('Max Stash Size', color='red')
+        ax4_twin.tick_params(axis='y', labelcolor='red')
+        
+        ax4.set_title('Impact of Stash Limit on Throughput and Max Stash Size')
+    
+    plt.tight_layout()
+    plt.savefig('trade_off_analysis.png', dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    print("Trade-off analysis plot saved as 'trade_off_analysis.png'")
 
 def main():
-    # Define the file paths
-    baseline_filepath = 'baseline_router_metrics.csv'
-    oblivious_filepath = 'oblivious_router_metrics.csv'
+    """Main function to run all visualization functions."""
+    print("Starting NDN Router Performance Visualization")
     
-    # Create output directory if it doesn't exist
-    output_dir = 'router_comparison_plots'
-    os.makedirs(output_dir, exist_ok=True)
+    plot_baseline_comparison()
+    plot_operations_benchmark()
+    plot_config_parameters()
+    plot_config_details()
+    plot_trade_off_analysis()
     
-    # Load data from both files
-    print("Loading data from CSV files...")
-    baseline_data = load_metric_data(baseline_filepath)
-    oblivious_data = load_metric_data(oblivious_filepath)
-    
-    # Extract aggregated metrics
-    baseline_metrics = baseline_data['aggregated']
-    oblivious_metrics = oblivious_data['aggregated']
-    
-    try:
-        # 1. Plot throughput comparison
-        print("Generating throughput comparison plot...")
-        fig_throughput = plot_throughput_comparison(baseline_metrics, oblivious_metrics)
-        fig_throughput.savefig(f'{output_dir}/throughput_comparison.png', dpi=300, bbox_inches='tight')
-        plt.close(fig_throughput)  # Close figure to free memory
-        
-        # 2. Plot latency comparison (mean values)
-        print("Generating mean latency comparison plot...")
-        latency_metrics = ['InterestLatencyMean', 'DataLatencyMean', 'RetrievalLatencyMean']
-        fig_latency = plot_bar_comparison(
-            baseline_metrics, oblivious_metrics, 
-            latency_metrics, 
-            'Mean Latency Comparison', 
-            'Latency (μs)',
-            log_scale=True
-        )
-        fig_latency.savefig(f'{output_dir}/mean_latency_comparison.png', dpi=300, bbox_inches='tight')
-        plt.close(fig_latency)  # Close figure to free memory
-        
-        # 3. Plot latency comparison (median values)
-        print("Generating median latency comparison plot...")
-        median_metrics = ['InterestLatencyMedian', 'DataLatencyMedian', 'RetrievalLatencyMedian']
-        fig_median = plot_bar_comparison(
-            baseline_metrics, oblivious_metrics, 
-            median_metrics, 
-            'Median Latency Comparison', 
-            'Latency (μs)',
-            log_scale=True
-        )
-        fig_median.savefig(f'{output_dir}/median_latency_comparison.png', dpi=300, bbox_inches='tight')
-        plt.close(fig_median)  # Close figure to free memory
-        
-        # 4. Plot memory usage comparison
-        print("Generating memory usage comparison plot...")
-        fig_memory = plot_memory_usage(baseline_metrics, oblivious_metrics)
-        fig_memory.savefig(f'{output_dir}/memory_usage_comparison.png', dpi=300, bbox_inches='tight')
-        plt.close(fig_memory)  # Close figure to free memory
-        
-        # 5. Plot latency distributions
-        latency_types = {
-            'interest': 'Interest Packets', 
-            'data': 'Data Packets', 
-            'retrieval': 'Retrieval Operations'
-        }
-        
-        for latency_type, label in latency_types.items():
-            try:
-                # Distribution plots
-                print(f"Generating {latency_type} latency distribution plot...")
-                fig_dist = plot_latency_distribution(
-                    baseline_data['raw'][latency_type],
-                    oblivious_data['raw'][latency_type],
-                    latency_type,
-                    f'{label} Latency Distribution'
-                )
-                fig_dist.savefig(f'{output_dir}/{latency_type}_latency_distribution.png', dpi=300, bbox_inches='tight')
-                plt.close(fig_dist)  # Close figure to free memory
-                
-                # Box plots
-                print(f"Generating {latency_type} latency box plot...")
-                fig_box = plot_latency_boxplot(
-                    baseline_data['raw'][latency_type],
-                    oblivious_data['raw'][latency_type],
-                    latency_type,
-                    f'{label} Latency Box Plot'
-                )
-                fig_box.savefig(f'{output_dir}/{latency_type}_latency_boxplot.png', dpi=300, bbox_inches='tight')
-                plt.close(fig_box)  # Close figure to free memory
-            except Exception as e:
-                print(f"Error generating {latency_type} plots: {e}")
-                
-        print(f"All plots have been saved to the '{output_dir}' directory.")
-        
-        # Print summary of key findings
-        print("\nSummary of Key Findings:")
-        
-        throughput_ratio = baseline_metrics['Throughput'] / oblivious_metrics['Throughput']
-        print(f"1. Throughput: Oblivious router is {throughput_ratio:.2f}x slower than baseline")
-        
-        for metric in latency_metrics:
-            short_name = metric.replace('LatencyMean', '')
-            ratio = oblivious_metrics[metric] / baseline_metrics[metric]
-            print(f"2. {short_name} Latency: Oblivious router is {ratio:.2f}x slower than baseline")
-        
-        memory_ratio = oblivious_metrics['PeakMemoryUsageMB'] / baseline_metrics['PeakMemoryUsageMB']
-        print(f"3. Memory Usage: Oblivious router uses {memory_ratio:.2f}x the memory of baseline")
-            
-    except Exception as e:
-        print(f"Error generating plots: {e}")
-        import traceback
-        traceback.print_exc()
+    print("All visualizations completed successfully!")
 
 if __name__ == "__main__":
     main()

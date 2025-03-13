@@ -15,20 +15,11 @@
 #include "crypto.hpp"
 
 // -------------------------
-// Configuration Parameters
-// a height of 5 gives 2⁵ (or 32) leaves. This number is small enough to keep the overall tree structure 
-// manageable for testing while still illustrating the concept of random leaf assignments for obfuscation.
-//
-// a bucket capacity of 4 is a common academic starting point. It represents a trade-off: smaller buckets reduce
-// the amount of data read per path but may increase the chance of stash overflows if not carefully managed.
-//
-//The stash acts as temporary storage for blocks read from the ORAM until they are evicted back. Setting it at 100 aims
-// to minimize the risk of overflow during worst-case scenarios while keeping the simulation simple.
+// Default Configuration Parameters
 // -------------------------
-
-constexpr int TREE_HEIGHT = 7;           // Height of the binary ORAM tree.
-constexpr int BUCKET_CAPACITY = 8;       // Maximum number of blocks per bucket.
-constexpr size_t STASH_LIMIT_DEFAULT = 500; // Maximum allowed blocks in the stash.
+constexpr int TREE_HEIGHT_DEFAULT = 5;          // Default height of the binary ORAM tree
+constexpr int BUCKET_CAPACITY_DEFAULT = 4;      // Default maximum number of blocks per bucket
+constexpr size_t STASH_LIMIT_DEFAULT = 100;     // Default maximum allowed blocks in the stash
 
 // -------------------------
 // Utility Functions
@@ -67,11 +58,11 @@ struct Block {
 // Bucket containing multiple blocks.
 template<typename K, typename V>
 struct Bucket {
-    std::vector<Block<K, V>> blocks;
-
-    // Each bucket is initialized with a fixed number of dummy blocks.
-    Bucket() {
-        blocks.resize(BUCKET_CAPACITY);
+    std::vector<Block<K,V>> blocks;
+    
+    // Bucket constructor initializes the bucket with the specified capacity of dummy blocks.
+    Bucket(int capacity = BUCKET_CAPACITY_DEFAULT) {
+        blocks.resize(capacity);
     }
 };
 
@@ -85,13 +76,14 @@ struct Bucket {
 template<typename K, typename V>
 class ObliviousMap {
 private:
-    std::vector<Bucket<K, V>> tree;  // ORAM tree stored as a vector of buckets.
-    int numBuckets;                  // Total number of buckets in the tree.
-    int treeHeight;                   // Tree height.
-    std::vector<Block<K, V>> stash;   // Temporary storage for accessed blocks.
-    size_t stashLimit;                // Maximum allowed stash size.
-    std::unordered_map<K, size_t> posMap; // Position map mapping keys to leaf nodes.
-    mutable std::mutex mtx;           // Mutex for thread safety.
+    std::vector<Bucket<K,V>> tree;         // The ORAM tree stored as a vector of buckets (1-indexed).
+    int numBuckets;                        // Total number of buckets in the tree.
+    int treeHeight;                        // Height of the tree.
+    std::vector<Block<K,V>> stash;         // The stash temporarily holding blocks from accessed paths.
+    size_t stashLimit;                     // Maximum allowed stash size.
+    int bucketCapacity;                    // Bucket capacity (blocks per bucket)
+    std::unordered_map<K, size_t> posMap;  // Client-side position map: maps keys to a random leaf index.
+    mutable std::mutex mtx;                // Mutex to protect concurrent accesses.
 
     // Computes total number of buckets in a full binary tree of given height.
     int compute_numBuckets(int height) {
@@ -159,11 +151,21 @@ private:
     }
 
 public:
-    // Constructor: Initializes ORAM tree and sets parameters.
-    ObliviousMap(int height = TREE_HEIGHT, size_t stash_limit = STASH_LIMIT_DEFAULT)
-        : treeHeight(height), stashLimit(stash_limit) {
+    // Constructor:
+    // Initializes the ORAM tree, sets the tree height, bucket capacity, and stash limit.
+    ObliviousMap(int height = TREE_HEIGHT_DEFAULT, 
+                size_t stash_limit = STASH_LIMIT_DEFAULT,
+                int bucket_capacity = BUCKET_CAPACITY_DEFAULT)
+      : treeHeight(height), stashLimit(stash_limit), bucketCapacity(bucket_capacity)
+    {
         numBuckets = compute_numBuckets(treeHeight);
-        tree.resize(numBuckets + 1); // Using 1-based indexing for the tree; index 0 remains unused. This simplifies arithmetic. 
+        // Using 1-based indexing for the tree; index 0 remains unused. This simplifies arithmetic. 
+        tree.resize(numBuckets + 1);
+        
+        // Initialize buckets with the specified capacity
+        for (int i = 1; i <= numBuckets; i++) {
+            tree[i] = Bucket<K,V>(bucketCapacity);
+        }
     }
 
     /// oblivious_insert:
@@ -211,6 +213,17 @@ public:
         write_path(path);
         return found;
     }
+    
+    // Get current stash size for metrics
+    size_t getStashSize() const {
+        std::lock_guard<std::mutex> lock(mtx);
+        return stash.size();
+    }
+    
+    // Get parameters for metrics
+    int getTreeHeight() const { return treeHeight; }
+    int getBucketCapacity() const { return bucketCapacity; }
+    size_t getStashLimit() const { return stashLimit; }
 };
 
 #endif

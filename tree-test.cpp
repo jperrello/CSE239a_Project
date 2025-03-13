@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <numeric>
 #include <iomanip>
+#include <sstream>
 
 #include "tree-map.hpp"
 #include "tree-queue.hpp"
@@ -36,6 +37,110 @@ struct Content {
     std::string data;
 };
 
+// -------------------------
+// Configuration Structure
+// -------------------------
+struct ORAMConfig {
+    // Tree Map parameters
+    int treeHeight;
+    int bucketCapacity;
+    size_t stashLimit;
+    
+    // Tree Queue parameters
+    int queueTreeHeight;
+    int queueBucketCapacity;
+    size_t queueStashLimit;
+    
+    // Constructor with default values
+    ORAMConfig(
+        int tHeight = TREE_HEIGHT_DEFAULT,
+        int bCapacity = BUCKET_CAPACITY_DEFAULT,
+        size_t sLimit = STASH_LIMIT_DEFAULT,
+        int qHeight = QUEUE_TREE_HEIGHT_DEFAULT,
+        int qCapacity = QUEUE_BUCKET_CAPACITY_DEFAULT,
+        size_t qLimit = QUEUE_STASH_LIMIT_DEFAULT
+    ) : treeHeight(tHeight),
+        bucketCapacity(bCapacity),
+        stashLimit(sLimit),
+        queueTreeHeight(qHeight),
+        queueBucketCapacity(qCapacity),
+        queueStashLimit(qLimit) {}
+        
+    // Method to create a string representation of the config
+    std::string toString() const {
+        std::stringstream ss;
+        ss << "Map(h=" << treeHeight << ",b=" << bucketCapacity << ",s=" << stashLimit << ")_"
+           << "Queue(h=" << queueTreeHeight << ",b=" << queueBucketCapacity << ",s=" << queueStashLimit << ")";
+        return ss.str();
+    }
+};
+
+// Function to estimate current memory usage
+size_t getCurrentMemoryUsage() {
+    // This is a platform-specific implementation
+    // On Linux, you could read from /proc/self/statm
+    std::ifstream statm("/proc/self/statm");
+    if (statm.is_open()) {
+        size_t size, resident, share, text, lib, data, dt;
+        statm >> size >> resident;
+        // Convert to bytes (multiply by page size, typically 4KB)
+        return resident * 4096;
+    }
+    return 0; // Fallback if not available
+}
+
+
+// -------------------------
+// Workload Generator
+// -------------------------
+class WorkloadGenerator {
+private:
+    std::vector<std::string> contentNames;
+    std::vector<std::string> consumerIds;
+    std::mt19937 rng;
+
+public:
+    WorkloadGenerator(int seed = 42) : rng(seed) {
+        // Generate realistic content prefixes
+        contentNames = {
+            "/videos/popular/video1",
+            "/videos/news/breaking",
+            "/images/photos/vacation",
+            "/text/articles/science",
+            "/apps/downloads/game",
+            "/streaming/live/sports",
+            "/social/profiles/user",
+            "/data/weather/forecast",
+            "/content/music/top10",
+            "/example/test/data"
+        };
+        
+        // Generate consumer IDs
+        for (int i = 1; i <= 20; i++) {
+            consumerIds.push_back("consumer_" + std::to_string(i));
+        }
+    }
+    
+    InterestPacket generateInterest() {
+        std::uniform_int_distribution<> contentDist(0, contentNames.size() - 1);
+        std::uniform_int_distribution<> consumerDist(0, consumerIds.size() - 1);
+        
+        return InterestPacket{
+            contentNames[contentDist(rng)],
+            consumerIds[consumerDist(rng)]
+        };
+    }
+    
+    DataPacket generateData(const std::string& contentName) {
+        // Generate random data payload (simulating different content sizes)
+        std::uniform_int_distribution<> sizeDist(100, 1000);
+        int dataSize = sizeDist(rng);
+        std::string data(dataSize, 'X'); // Placeholder data
+        
+        return DataPacket{contentName, data};
+    }
+};
+    
 // -------------------------
 // Performance Metrics Structure
 // -------------------------
@@ -99,11 +204,11 @@ struct PerformanceMetrics {
         
         std::cout << std::fixed << std::setprecision(3);
         std::cout << "Interest handling latency (μs): mean=" << interestMean 
-                  << ", median=" << interestMedian << ", stddev=" << interestStdDev << "\n";
+                    << ", median=" << interestMedian << ", stddev=" << interestStdDev << "\n";
         std::cout << "Data handling latency (μs): mean=" << dataMean 
-                  << ", median=" << dataMedian << ", stddev=" << dataStdDev << "\n";
+                    << ", median=" << dataMedian << ", stddev=" << dataStdDev << "\n";
         std::cout << "Content retrieval latency (μs): mean=" << retrievalMean 
-                  << ", median=" << retrievalMedian << ", stddev=" << retrievalStdDev << "\n";
+                    << ", median=" << retrievalMedian << ", stddev=" << retrievalStdDev << "\n";
         
         if (!stashSizeHistory.empty()) {
             double avgStash = std::accumulate(stashSizeHistory.begin(), stashSizeHistory.end(), 0.0) / stashSizeHistory.size();
@@ -193,24 +298,10 @@ struct PerformanceMetrics {
         file.close();
         std::cout << "Performance data saved to " << filename << "\n";
     }
-};
-
-// Function to estimate current memory usage
-size_t getCurrentMemoryUsage() {
-    // This is a platform-specific implementation
-    // On Linux, you could read from /proc/self/statm
-    std::ifstream statm("/proc/self/statm");
-    if (statm.is_open()) {
-        size_t size, resident, share, text, lib, data, dt;
-        statm >> size >> resident;
-        // Convert to bytes (multiply by page size, typically 4KB)
-        return resident * 4096;
-    }
-    return 0; // Fallback if not available
-}
+};    
 
 // -------------------------
-// NDNRouter Class with Performance Tracking
+// NDNRouter Class Using Oblivious Structures
 // -------------------------
 class NDNRouter {
 private:
@@ -218,10 +309,14 @@ private:
     ObliviousMap<std::string, std::string> PIT;
     ObliviousQueue<std::string> CS;
     PerformanceMetrics metrics;
+    ORAMConfig config;
 
 public:
-NDNRouter(bool collectMetrics = false, int treeHeight = TREE_HEIGHT, 
-    int queueHeight = QUEUE_TREE_HEIGHT, size_t stashSize = 500) : FIB(treeHeight, stashSize), PIT(treeHeight, stashSize), CS(queueHeight, stashSize)
+    NDNRouter(bool collectMetrics = false, const ORAMConfig& oramConfig = ORAMConfig())
+      : FIB(oramConfig.treeHeight, oramConfig.stashLimit, oramConfig.bucketCapacity),
+        PIT(oramConfig.treeHeight, oramConfig.stashLimit, oramConfig.bucketCapacity),
+        CS(oramConfig.queueTreeHeight, oramConfig.queueStashLimit, oramConfig.queueBucketCapacity),
+        config(oramConfig)
     {
         // Pre-populate the FIB with example routes
         FIB.oblivious_insert("/example", "eth0");
@@ -251,10 +346,12 @@ NDNRouter(bool collectMetrics = false, int treeHeight = TREE_HEIGHT,
         metrics.interestLatencies.push_back(diff.count());
         metrics.totalOperations++;
         
-        // Update stash metrics if access is available
-        // Note: You might need to modify ObliviousMap to expose stash size
-        // metrics.stashSizeHistory.push_back(FIB.getStashSize());
-        // metrics.maxStashSize = std::max(metrics.maxStashSize, FIB.getStashSize());
+        // Update stash metrics
+        size_t fibStashSize = FIB.getStashSize();
+        size_t pitStashSize = PIT.getStashSize();
+        size_t totalStashSize = fibStashSize + pitStashSize;
+        metrics.stashSizeHistory.push_back(totalStashSize);
+        metrics.maxStashSize = std::max(metrics.maxStashSize, totalStashSize);
         
         // Update memory usage
         size_t currentMemory = getCurrentMemoryUsage();
@@ -281,6 +378,13 @@ NDNRouter(bool collectMetrics = false, int treeHeight = TREE_HEIGHT,
         std::chrono::duration<double, std::micro> diff = end - start;
         metrics.dataLatencies.push_back(diff.count());
         metrics.totalOperations++;
+        
+        // Update stash metrics
+        size_t pitStashSize = PIT.getStashSize();
+        size_t csStashSize = CS.getStashSize();
+        size_t totalStashSize = pitStashSize + csStashSize;
+        metrics.stashSizeHistory.push_back(totalStashSize);
+        metrics.maxStashSize = std::max(metrics.maxStashSize, totalStashSize);
         
         // Update memory usage
         size_t currentMemory = getCurrentMemoryUsage();
@@ -309,6 +413,11 @@ NDNRouter(bool collectMetrics = false, int treeHeight = TREE_HEIGHT,
         metrics.retrievalLatencies.push_back(diff.count());
         metrics.totalOperations++;
         
+        // Update stash metrics
+        size_t csStashSize = CS.getStashSize();
+        metrics.stashSizeHistory.push_back(csStashSize);
+        metrics.maxStashSize = std::max(metrics.maxStashSize, csStashSize);
+        
         // Update memory usage
         size_t currentMemory = getCurrentMemoryUsage();
         metrics.peakMemoryUsage = std::max(metrics.peakMemoryUsage, currentMemory);
@@ -330,6 +439,10 @@ NDNRouter(bool collectMetrics = false, int treeHeight = TREE_HEIGHT,
     
     void stopMetricCollection(double elapsedTimeSeconds) {
         metrics.totalTimeSeconds = elapsedTimeSeconds;
+    }
+    
+    const ORAMConfig& getConfig() const {
+        return config;
     }
 };
 
@@ -451,518 +564,532 @@ public:
 };
 
 // -------------------------
-// Workload Generator
+// Configuration Benchmark
 // -------------------------
-class WorkloadGenerator {
-private:
-    std::vector<std::string> contentNames;
-    std::vector<std::string> consumerIds;
-    std::mt19937 rng;
-
-public:
-    WorkloadGenerator(int seed = 42) : rng(seed) {
-        // Generate realistic content prefixes
-        contentNames = {
-            "/videos/popular/video1",
-            "/videos/news/breaking",
-            "/images/photos/vacation",
-            "/text/articles/science",
-            "/apps/downloads/game",
-            "/streaming/live/sports",
-            "/social/profiles/user",
-            "/data/weather/forecast",
-            "/content/music/top10",
-            "/example/test/data"
-        };
-        
-        // Generate consumer IDs
-        for (int i = 1; i <= 20; i++) {
-            consumerIds.push_back("consumer_" + std::to_string(i));
-        }
-    }
+void run_configuration_benchmark(const std::vector<ORAMConfig>& configs, int numOperations) {
+    std::cout << "\n=========== CONFIGURATION BENCHMARK ===========\n";
+    std::cout << "Testing " << configs.size() << " different ORAM configurations with " 
+              << numOperations << " operations each\n";
     
-    InterestPacket generateInterest() {
-        std::uniform_int_distribution<> contentDist(0, contentNames.size() - 1);
-        std::uniform_int_distribution<> consumerDist(0, consumerIds.size() - 1);
-        
-        return InterestPacket{
-            contentNames[contentDist(rng)],
-            consumerIds[consumerDist(rng)]
-        };
-    }
-    
-    DataPacket generateData(const std::string& contentName) {
-        // Generate random data payload (simulating different content sizes)
-        std::uniform_int_distribution<> sizeDist(100, 1000);
-        int dataSize = sizeDist(rng);
-        std::string data(dataSize, 'X'); // Placeholder data
-        
-        return DataPacket{contentName, data};
-    }
-};
-
-// -------------------------
-// Performance Testing Functions
-// -------------------------
-void run_comparison_benchmark(int numOperations = 100) {
-    std::cout << "\n=========== COMPARISON BENCHMARK ===========\n";
-    std::cout << "Running " << numOperations << " operations on each router type\n";
+    // Prepare CSV file for results
+    std::ofstream resultsFile("results/config_benchmark_results.csv");
+    resultsFile << "TreeHeight,BucketCapacity,StashLimit,QueueTreeHeight,QueueBucketCapacity,QueueStashLimit,"
+                << "Throughput,AvgInterestLatency,AvgDataLatency,AvgRetrievalLatency,MaxStashSize,TotalTimeSeconds\n";
     
     // Setup workload generator
     WorkloadGenerator workloadGen;
     
-    // Setup routers
-    NDNRouter obliviousRouter(true);
-    BaselineNDNRouter baselineRouter(true);
-    
-    // Benchmark oblivious router
-    std::cout << "\nBenchmarking privacy-preserving NDN router...\n";
-    auto startOblivious = std::chrono::high_resolution_clock::now();
-    obliviousRouter.startMetricCollection();
-    
-    for (int i = 0; i < numOperations; i++) {
-        if (i % 1000 == 0) {
-            std::cout << "Progress: " << i << "/" << numOperations << "\n";
-        }
+    for (const auto& config : configs) {
+        std::cout << "\nTesting configuration: Tree height=" << config.treeHeight
+                  << ", Bucket capacity=" << config.bucketCapacity
+                  << ", Stash limit=" << config.stashLimit << "\n";
         
-        InterestPacket interest = workloadGen.generateInterest();
-        obliviousRouter.handle_interest(interest);
-        
-        DataPacket data = workloadGen.generateData(interest.contentName);
-        obliviousRouter.handle_data(data);
-        
-        Content content;
-        obliviousRouter.serve_content(content);
-    }
-    
-    auto endOblivious = std::chrono::high_resolution_clock::now();
-    std::chrono::duration<double> diffOblivious = endOblivious - startOblivious;
-    obliviousRouter.stopMetricCollection(diffOblivious.count());
-    
-    // Benchmark baseline router
-    std::cout << "\nBenchmarking baseline NDN router...\n";
-    auto startBaseline = std::chrono::high_resolution_clock::now();
-    baselineRouter.startMetricCollection();
-    
-    for (int i = 0; i < numOperations; i++) {
-        if (i % 1000 == 0) {
-            std::cout << "Progress: " << i << "/" << numOperations << "\n";
-        }
-        
-        InterestPacket interest = workloadGen.generateInterest();
-        baselineRouter.handle_interest(interest);
-        
-        DataPacket data = workloadGen.generateData(interest.contentName);
-        baselineRouter.handle_data(data);
-        
-        Content content;
-        baselineRouter.serve_content(content);
-    }
-    
-    auto endBaseline = std::chrono::high_resolution_clock::now();
-    std::chrono::duration<double> diffBaseline = endBaseline - startBaseline;
-    baselineRouter.stopMetricCollection(diffBaseline.count());
-    
-    // Print results
-    obliviousRouter.getMetrics().printSummary("Privacy-Preserving NDN Router Results");
-    baselineRouter.getMetrics().printSummary("Baseline NDN Router Results");
-    
-    // Calculate overhead
-    double throughputOblivious = obliviousRouter.getMetrics().totalOperations / obliviousRouter.getMetrics().totalTimeSeconds;
-    double throughputBaseline = baselineRouter.getMetrics().totalOperations / baselineRouter.getMetrics().totalTimeSeconds;
-    
-    double avgLatencyOblivious = 0.0;
-    if (!obliviousRouter.getMetrics().interestLatencies.empty()) {
-        avgLatencyOblivious = std::accumulate(
-            obliviousRouter.getMetrics().interestLatencies.begin(),
-            obliviousRouter.getMetrics().interestLatencies.end(), 0.0
-        ) / obliviousRouter.getMetrics().interestLatencies.size();
-    }
-    
-    double avgLatencyBaseline = 0.0;
-    if (!baselineRouter.getMetrics().interestLatencies.empty()) {
-        avgLatencyBaseline = std::accumulate(
-            baselineRouter.getMetrics().interestLatencies.begin(),
-            baselineRouter.getMetrics().interestLatencies.end(), 0.0
-        ) / baselineRouter.getMetrics().interestLatencies.size();
-    }
-    
-    std::cout << "\n===== PERFORMANCE COMPARISON =====\n";
-    std::cout << "Throughput overhead: " << (throughputBaseline / throughputOblivious) << "x\n";
-    std::cout << "Latency overhead: " << (avgLatencyOblivious / avgLatencyBaseline) << "x\n";
-    std::cout << "Memory overhead: " << 
-        (obliviousRouter.getMetrics().peakMemoryUsage / 
-         static_cast<double>(baselineRouter.getMetrics().peakMemoryUsage)) << "x\n";
-    
-    // Save results to CSV for further analysis
-    obliviousRouter.getMetrics().saveToCSV("results/oblivious_router_metrics.csv");
-    baselineRouter.getMetrics().saveToCSV("results/baseline_router_metrics.csv");
-}
-
-// -------------------------
-// Tree Height Impact Test
-// -------------------------
-void run_tree_height_impact_test() {
-    std::cout << "\n=========== TREE HEIGHT IMPACT TEST ===========\n";
-    
-    const int numOperations = 100;
-    const std::vector<int> treeHeights = {3, 4, 5, 6, 7, 8}; // Different tree heights to test
-    
-    std::cout << "Testing impact of tree height on performance...\n";
-    std::cout << "Running " << numOperations << " operations for each tree height\n";
-    
-    // Setup workload generator
-    WorkloadGenerator workloadGen;
-    
-    std::ofstream resultFile("reuslts/tree_height_impact.csv");
-    resultFile << "TreeHeight,ThroughputOpsPerSec,AvgInterestLatencyMicros,AvgDataLatencyMicros,AvgRetrievalLatencyMicros\n";
-    
-    for (int height : treeHeights) {
-        std::cout << "\nTesting tree height = " << height << "\n";
-        
-        // Create router with specific tree height
-        NDNRouter router(true, height, height - 1); // Queue height is 1 less than map height
-        
-        auto start = std::chrono::high_resolution_clock::now();
-        router.startMetricCollection();
-        
-        for (int i = 0; i < numOperations; i++) {
-            InterestPacket interest = workloadGen.generateInterest();
-            router.handle_interest(interest);
+        try {
+            // Create router with this configuration
+            NDNRouter router(true, config);
             
-            DataPacket data = workloadGen.generateData(interest.contentName);
-            router.handle_data(data);
+            auto start = std::chrono::high_resolution_clock::now();
+            router.startMetricCollection();
             
-            Content content;
-            router.serve_content(content);
-        }
-        
-        auto end = std::chrono::high_resolution_clock::now();
-        std::chrono::duration<double> diff = end - start;
-        router.stopMetricCollection(diff.count());
-        
-        // Calculate metrics
-        double throughput = router.getMetrics().totalOperations / router.getMetrics().totalTimeSeconds;
-        
-        double avgInterestLatency = 0.0;
-        if (!router.getMetrics().interestLatencies.empty()) {
-            avgInterestLatency = std::accumulate(
-                router.getMetrics().interestLatencies.begin(),
-                router.getMetrics().interestLatencies.end(), 0.0
-            ) / router.getMetrics().interestLatencies.size();
-        }
-        
-        double avgDataLatency = 0.0;
-        if (!router.getMetrics().dataLatencies.empty()) {
-            avgDataLatency = std::accumulate(
-                router.getMetrics().dataLatencies.begin(),
-                router.getMetrics().dataLatencies.end(), 0.0
-            ) / router.getMetrics().dataLatencies.size();
-        }
-        
-        double avgRetrievalLatency = 0.0;
-        if (!router.getMetrics().retrievalLatencies.empty()) {
-            avgRetrievalLatency = std::accumulate(
-                router.getMetrics().retrievalLatencies.begin(),
-                router.getMetrics().retrievalLatencies.end(), 0.0
-            ) / router.getMetrics().retrievalLatencies.size();
-        }
-        
-        std::cout << "Throughput: " << throughput << " ops/sec\n";
-        std::cout << "Avg Interest Latency: " << avgInterestLatency << " μs\n";
-        std::cout << "Avg Data Latency: " << avgDataLatency << " μs\n";
-        std::cout << "Avg Retrieval Latency: " << avgRetrievalLatency << " μs\n";
-        
-        resultFile << height << ","
-                   << throughput << ","
-                   << avgInterestLatency << ","
-                   << avgDataLatency << ","
-                   << avgRetrievalLatency << "\n";
-    }
-    
-    resultFile.close();
-    std::cout << "\nTree height impact results saved to tree_height_impact.csv\n";
-}
-
-// -------------------------
-// Bucket Size Impact Test
-// -------------------------
-void run_bucket_size_impact_test() {
-    std::cout << "\n=========== BUCKET SIZE IMPACT TEST ===========\n";
-    std::cout << "This test requires modifying the code to allow dynamic bucket sizes.\n";
-    std::cout << "In your implementation, you would need to modify tree-map.hpp and tree-queue.hpp\n";
-    std::cout << "to make BUCKET_CAPACITY and QUEUE_BUCKET_CAPACITY parameters instead of constants.\n";
-    std::cout << "After implementing that change, you could create a similar test to tree_height_impact_test\n";
-    std::cout << "that varies bucket sizes instead of tree heights.\n";
-}
-
-// -------------------------
-// Concurrency Impact Test
-// -------------------------
-void run_concurrency_test(int maxThreads = 8) {
-    std::cout << "\n=========== CONCURRENCY IMPACT TEST ===========\n";
-    
-    const int operationsPerThread = 20;
-    std::vector<int> threadCounts = {1, 2, 4, 8, 16}; // Different thread counts to test
-    
-    // Don't test more threads than specified
-    threadCounts.erase(
-        std::remove_if(threadCounts.begin(), threadCounts.end(), 
-                      [maxThreads](int tc) { return tc > maxThreads; }),
-        threadCounts.end()
-    );
-    
-    std::cout << "Testing impact of concurrency on performance...\n";
-    
-    std::ofstream resultFile("results/concurrency_impact.csv");
-    resultFile << "ThreadCount,TotalOperations,TotalTimeSeconds,ThroughputOpsPerSec\n";
-    
-    for (int threadCount : threadCounts) {
-        std::cout << "\nTesting with " << threadCount << " threads\n";
-        
-        // Create shared router
-        NDNRouter router(true);
-        
-        // Setup workload generator
-        WorkloadGenerator workloadGen;
-        
-        auto start = std::chrono::high_resolution_clock::now();
-        router.startMetricCollection();
-        
-        // Create and run threads
-        std::vector<std::thread> threads;
-        for (int t = 0; t < threadCount; t++) {
-            threads.emplace_back([&router, &workloadGen, operationsPerThread, t]() {
-                for (int i = 0; i < operationsPerThread; i++) {
-                    InterestPacket interest = workloadGen.generateInterest();
-                    interest.consumerId += "_thread" + std::to_string(t); // Make unique
-                    router.handle_interest(interest);
-                    
-                    DataPacket data = workloadGen.generateData(interest.contentName);
-                    router.handle_data(data);
-                    
-                    Content content;
-                    router.serve_content(content);
+            for (int i = 0; i < numOperations; i++) {
+                if (i % 100 == 0 && i > 0) {
+                    std::cout << "Completed " << i << "/" << numOperations << " operations\r";
+                    std::cout.flush();
                 }
-            });
+                
+                InterestPacket interest = workloadGen.generateInterest();
+                router.handle_interest(interest);
+                
+                DataPacket data = workloadGen.generateData(interest.contentName);
+                router.handle_data(data);
+                
+                Content content;
+                router.serve_content(content);
+            }
+            
+            auto end = std::chrono::high_resolution_clock::now();
+            std::chrono::duration<double> diff = end - start;
+            router.stopMetricCollection(diff.count());
+            
+            // Calculate metrics
+            double throughput = router.getMetrics().totalOperations / router.getMetrics().totalTimeSeconds;
+            
+            double avgInterestLatency = 0.0;
+            if (!router.getMetrics().interestLatencies.empty()) {
+                avgInterestLatency = std::accumulate(
+                    router.getMetrics().interestLatencies.begin(),
+                    router.getMetrics().interestLatencies.end(), 0.0
+                ) / router.getMetrics().interestLatencies.size();
+            }
+            
+            double avgDataLatency = 0.0;
+            if (!router.getMetrics().dataLatencies.empty()) {
+                avgDataLatency = std::accumulate(
+                    router.getMetrics().dataLatencies.begin(),
+                    router.getMetrics().dataLatencies.end(), 0.0
+                ) / router.getMetrics().dataLatencies.size();
+            }
+            
+            double avgRetrievalLatency = 0.0;
+            if (!router.getMetrics().retrievalLatencies.empty()) {
+                avgRetrievalLatency = std::accumulate(
+                    router.getMetrics().retrievalLatencies.begin(),
+                    router.getMetrics().retrievalLatencies.end(), 0.0
+                ) / router.getMetrics().retrievalLatencies.size();
+            }
+            
+            size_t maxStashSize = router.getMetrics().maxStashSize;
+            
+            // Print results
+            std::cout << "Throughput: " << throughput << " ops/sec\n";
+            std::cout << "Avg Interest Latency: " << avgInterestLatency << " μs\n";
+            std::cout << "Avg Data Latency: " << avgDataLatency << " μs\n";
+            std::cout << "Avg Retrieval Latency: " << avgRetrievalLatency << " μs\n";
+            std::cout << "Max Stash Size: " << maxStashSize << " blocks\n";
+            std::cout << "Total Time: " << router.getMetrics().totalTimeSeconds << " seconds\n";
+            
+            // Write to CSV
+            resultsFile << config.treeHeight << ","
+                       << config.bucketCapacity << ","
+                       << config.stashLimit << ","
+                       << config.queueTreeHeight << ","
+                       << config.queueBucketCapacity << ","
+                       << config.queueStashLimit << ","
+                       << throughput << ","
+                       << avgInterestLatency << ","
+                       << avgDataLatency << ","
+                       << avgRetrievalLatency << ","
+                       << maxStashSize << ","
+                       << router.getMetrics().totalTimeSeconds << "\n";
+            
+            // Save detailed metrics
+            std::string filename = "results/config_th" + std::to_string(config.treeHeight) + 
+                                 "_bc" + std::to_string(config.bucketCapacity) + 
+                                 "_sl" + std::to_string(config.stashLimit) + ".csv";
+            router.getMetrics().saveToCSV(filename);
+            
+        } catch (const std::exception& ex) {
+            std::cerr << "ERROR with configuration (h=" << config.treeHeight 
+                      << ", b=" << config.bucketCapacity 
+                      << ", s=" << config.stashLimit 
+                      << "): " << ex.what() << "\n";
+                      
+            resultsFile << config.treeHeight << ","
+                       << config.bucketCapacity << ","
+                       << config.stashLimit << ","
+                       << config.queueTreeHeight << ","
+                       << config.queueBucketCapacity << ","
+                       << config.queueStashLimit << ","
+                       << "ERROR: " << ex.what() << "\n";
         }
-        
-        // Wait for all threads to finish
-        for (auto& t : threads) {
-            t.join();
-        }
-        
-        auto end = std::chrono::high_resolution_clock::now();
-        std::chrono::duration<double> diff = end - start;
-        router.stopMetricCollection(diff.count());
-        
-        // Calculate metrics
-        int totalOps = threadCount * operationsPerThread * 3; // 3 operations per iteration
-        double throughput = totalOps / router.getMetrics().totalTimeSeconds;
-        
-        std::cout << "Total operations: " << totalOps << "\n";
-        std::cout << "Total time: " << router.getMetrics().totalTimeSeconds << " seconds\n";
-        std::cout << "Throughput: " << throughput << " ops/sec\n";
-        
-        resultFile << threadCount << ","
-                   << totalOps << ","
-                   << router.getMetrics().totalTimeSeconds << ","
-                   << throughput << "\n";
     }
     
-    resultFile.close();
-    std::cout << "\nConcurrency impact results saved to concurrency_impact.csv\n";
+    resultsFile.close();
+    std::cout << "\nConfiguration benchmark complete. Results saved to config_benchmark_results.csv\n";
 }
 
-// Forward Declarations
-void router_thread_func(NDNRouter& router, int thread_id);
-void run_unit_tests();
-void run_profiling_test();
-void run_integration_test();
-void run_comparison_benchmark(int numOperations);
-void run_tree_height_impact_test();
-void run_bucket_size_impact_test();
-void run_concurrency_test(int maxThreads);
+// -------------------------
+// Comparison with Baseline
+// -------------------------
+void compare_with_baseline(const std::vector<int>& operationCounts) {
+    std::cout << "\n=========== BASELINE COMPARISON ===========\n";
+    std::cout << "Comparing privacy-preserving NDN with baseline implementation\n";
+    
+    // Create results file
+    std::ofstream resultsFile("results/baseline_comparison.csv");
+    resultsFile << "OperationCount,BaselineThroughput,PrivacyThroughput,ThroughputOverhead,"
+                << "BaselineInterestLatency,PrivacyInterestLatency,InterestLatencyOverhead,"
+                << "BaselineDataLatency,PrivacyDataLatency,DataLatencyOverhead,"
+                << "BaselineRetrievalLatency,PrivacyRetrievalLatency,RetrievalLatencyOverhead,"
+                << "BaselineMemoryMB,PrivacyMemoryMB,MemoryOverhead\n";
+    
+    // Setup workload generator
+    WorkloadGenerator workloadGen;
+    
+    // Default configuration
+    ORAMConfig defaultConfig;
+    
+    for (int opCount : operationCounts) {
+        std::cout << "\nComparing with " << opCount << " operations...\n";
+        
+        try {
+            // First run baseline
+            std::cout << "Running baseline implementation...\n";
+            BaselineNDNRouter baselineRouter(true);
+            
+            auto baselineStart = std::chrono::high_resolution_clock::now();
+            baselineRouter.startMetricCollection();
+            
+            for (int i = 0; i < opCount; i++) {
+                if (i % 100 == 0 && i > 0) {
+                    std::cout << "Baseline: " << i << "/" << opCount << " operations\r";
+                    std::cout.flush();
+                }
+                
+                InterestPacket interest = workloadGen.generateInterest();
+                baselineRouter.handle_interest(interest);
+                
+                DataPacket data = workloadGen.generateData(interest.contentName);
+                baselineRouter.handle_data(data);
+                
+                Content content;
+                baselineRouter.serve_content(content);
+            }
+            
+            auto baselineEnd = std::chrono::high_resolution_clock::now();
+            std::chrono::duration<double> baselineDiff = baselineEnd - baselineStart;
+            baselineRouter.stopMetricCollection(baselineDiff.count());
+            
+            // Now run privacy-preserving implementation
+            std::cout << "\nRunning privacy-preserving implementation...\n";
+            NDNRouter privacyRouter(true, defaultConfig);
+            
+            auto privacyStart = std::chrono::high_resolution_clock::now();
+            privacyRouter.startMetricCollection();
+            
+            for (int i = 0; i < opCount; i++) {
+                if (i % 100 == 0 && i > 0) {
+                    std::cout << "Privacy: " << i << "/" << opCount << " operations\r";
+                    std::cout.flush();
+                }
+                
+                InterestPacket interest = workloadGen.generateInterest();
+                privacyRouter.handle_interest(interest);
+                
+                DataPacket data = workloadGen.generateData(interest.contentName);
+                privacyRouter.handle_data(data);
+                
+                Content content;
+                privacyRouter.serve_content(content);
+            }
+            
+            auto privacyEnd = std::chrono::high_resolution_clock::now();
+            std::chrono::duration<double> privacyDiff = privacyEnd - privacyStart;
+            privacyRouter.stopMetricCollection(privacyDiff.count());
+            
+            // Calculate metrics
+            double baselineThroughput = baselineRouter.getMetrics().totalOperations / 
+                                        baselineRouter.getMetrics().totalTimeSeconds;
+            
+            double privacyThroughput = privacyRouter.getMetrics().totalOperations / 
+                                       privacyRouter.getMetrics().totalTimeSeconds;
+            
+            double throughputOverhead = baselineThroughput / privacyThroughput;
+            
+            // Calculate average latencies
+            auto calcAvg = [](const std::vector<double>& latencies) {
+                return latencies.empty() ? 0.0 : 
+                       std::accumulate(latencies.begin(), latencies.end(), 0.0) / latencies.size();
+            };
+            
+            double baselineInterestLatency = calcAvg(baselineRouter.getMetrics().interestLatencies);
+            double privacyInterestLatency = calcAvg(privacyRouter.getMetrics().interestLatencies);
+            double interestLatencyOverhead = privacyInterestLatency / baselineInterestLatency;
+            
+            double baselineDataLatency = calcAvg(baselineRouter.getMetrics().dataLatencies);
+            double privacyDataLatency = calcAvg(privacyRouter.getMetrics().dataLatencies);
+            double dataLatencyOverhead = privacyDataLatency / baselineDataLatency;
+            
+            double baselineRetrievalLatency = calcAvg(baselineRouter.getMetrics().retrievalLatencies);
+            double privacyRetrievalLatency = calcAvg(privacyRouter.getMetrics().retrievalLatencies);
+            double retrievalLatencyOverhead = privacyRetrievalLatency / baselineRetrievalLatency;
+            
+            // Memory usage in MB
+            double baselineMemoryMB = baselineRouter.getMetrics().peakMemoryUsage / (1024.0 * 1024.0);
+            double privacyMemoryMB = privacyRouter.getMetrics().peakMemoryUsage / (1024.0 * 1024.0);
+            double memoryOverhead = privacyMemoryMB / baselineMemoryMB;
+            
+            // Print comparison results
+            std::cout << "\nResults for " << opCount << " operations:\n";
+            std::cout << "Throughput: Baseline=" << baselineThroughput 
+                     << " ops/sec, Privacy=" << privacyThroughput 
+                     << " ops/sec, Overhead=" << throughputOverhead << "x\n";
+                     
+            std::cout << "Interest Latency: Baseline=" << baselineInterestLatency 
+                     << " μs, Privacy=" << privacyInterestLatency 
+                     << " μs, Overhead=" << interestLatencyOverhead << "x\n";
+                     
+            std::cout << "Data Latency: Baseline=" << baselineDataLatency 
+                     << " μs, Privacy=" << privacyDataLatency 
+                     << " μs, Overhead=" << dataLatencyOverhead << "x\n";
+                     
+            std::cout << "Retrieval Latency: Baseline=" << baselineRetrievalLatency 
+                     << " μs, Privacy=" << privacyRetrievalLatency 
+                     << " μs, Overhead=" << retrievalLatencyOverhead << "x\n";
+                     
+            std::cout << "Memory Usage: Baseline=" << baselineMemoryMB 
+                     << " MB, Privacy=" << privacyMemoryMB 
+                     << " MB, Overhead=" << memoryOverhead << "x\n";
+            
+            // Write to CSV
+            resultsFile << opCount << ","
+                       << baselineThroughput << ","
+                       << privacyThroughput << ","
+                       << throughputOverhead << ","
+                       << baselineInterestLatency << ","
+                       << privacyInterestLatency << ","
+                       << interestLatencyOverhead << ","
+                       << baselineDataLatency << ","
+                       << privacyDataLatency << ","
+                       << dataLatencyOverhead << ","
+                       << baselineRetrievalLatency << ","
+                       << privacyRetrievalLatency << ","
+                       << retrievalLatencyOverhead << ","
+                       << baselineMemoryMB << ","
+                       << privacyMemoryMB << ","
+                       << memoryOverhead << "\n";
+            
+            // Save detailed metrics
+            baselineRouter.getMetrics().saveToCSV("results/baseline_" + std::to_string(opCount) + ".csv");
+            privacyRouter.getMetrics().saveToCSV("results/privacy_" + std::to_string(opCount) + ".csv");
+            
+        } catch (const std::exception& ex) {
+            std::cerr << "ERROR with " << opCount << " operations: " << ex.what() << "\n";
+            resultsFile << opCount << ",ERROR: " << ex.what() << "\n";
+        }
+    }
+    
+    resultsFile.close();
+    std::cout << "\nBaseline comparison complete. Results saved to baseline_comparison.csv\n";
+}
+
+// -------------------------
+// Operations Benchmark
+// -------------------------
+void run_operations_benchmark(const std::vector<int>& operationCounts) {
+    std::cout << "\n=========== OPERATIONS SCALING BENCHMARK ===========\n";
+    std::cout << "Testing performance with different operation counts\n";
+    
+    // Default configuration
+    ORAMConfig defaultConfig;
+    
+    // Create results file
+    std::ofstream resultsFile("results/operations_benchmark.csv");
+    resultsFile << "OperationCount,ThroughputOpsPerSec,InterestLatencyMean,DataLatencyMean,RetrievalLatencyMean,MaxStashSize,TotalTimeSeconds\n";
+    
+    // Setup workload generator
+    WorkloadGenerator workloadGen;
+    
+    for (int opCount : operationCounts) {
+        std::cout << "\nRunning benchmark with " << opCount << " operations...\n";
+        
+        try {
+            // Create router with default configuration
+            NDNRouter router(true, defaultConfig);
+            
+            auto start = std::chrono::high_resolution_clock::now();
+            router.startMetricCollection();
+            
+            for (int i = 0; i < opCount; i++) {
+                if (i % 100 == 0 && i > 0) {
+                    std::cout << "Completed " << i << "/" << opCount << " operations\r";
+                    std::cout.flush();
+                }
+                
+                InterestPacket interest = workloadGen.generateInterest();
+                router.handle_interest(interest);
+                
+                DataPacket data = workloadGen.generateData(interest.contentName);
+                router.handle_data(data);
+                
+                Content content;
+                router.serve_content(content);
+            }
+            
+            auto end = std::chrono::high_resolution_clock::now();
+            std::chrono::duration<double> diff = end - start;
+            router.stopMetricCollection(diff.count());
+            
+            // Calculate metrics
+            double throughput = router.getMetrics().totalOperations / router.getMetrics().totalTimeSeconds;
+            
+            double avgInterestLatency = 0.0;
+            if (!router.getMetrics().interestLatencies.empty()) {
+                avgInterestLatency = std::accumulate(
+                    router.getMetrics().interestLatencies.begin(),
+                    router.getMetrics().interestLatencies.end(), 0.0
+                ) / router.getMetrics().interestLatencies.size();
+            }
+            
+            double avgDataLatency = 0.0;
+            if (!router.getMetrics().dataLatencies.empty()) {
+                avgDataLatency = std::accumulate(
+                    router.getMetrics().dataLatencies.begin(),
+                    router.getMetrics().dataLatencies.end(), 0.0
+                ) / router.getMetrics().dataLatencies.size();
+            }
+            
+            double avgRetrievalLatency = 0.0;
+            if (!router.getMetrics().retrievalLatencies.empty()) {
+                avgRetrievalLatency = std::accumulate(
+                    router.getMetrics().retrievalLatencies.begin(),
+                    router.getMetrics().retrievalLatencies.end(), 0.0
+                ) / router.getMetrics().retrievalLatencies.size();
+            }
+            
+            size_t maxStashSize = router.getMetrics().maxStashSize;
+            
+            // Print results
+            std::cout << "Throughput: " << throughput << " ops/sec\n";
+            std::cout << "Avg Interest Latency: " << avgInterestLatency << " μs\n";
+            std::cout << "Avg Data Latency: " << avgDataLatency << " μs\n";
+            std::cout << "Avg Retrieval Latency: " << avgRetrievalLatency << " μs\n";
+            std::cout << "Max Stash Size: " << maxStashSize << " blocks\n";
+            std::cout << "Total Time: " << router.getMetrics().totalTimeSeconds << " seconds\n";
+            
+            // Write to CSV
+            resultsFile << opCount << ","
+                       << throughput << ","
+                       << avgInterestLatency << ","
+                       << avgDataLatency << ","
+                       << avgRetrievalLatency << ","
+                       << maxStashSize << ","
+                       << router.getMetrics().totalTimeSeconds << "\n";
+            
+            // Save detailed metrics
+            std::string filename = "results/operations_" + std::to_string(opCount) + ".csv";
+            router.getMetrics().saveToCSV(filename);
+            
+        } catch (const std::exception& ex) {
+            std::cerr << "ERROR with " << opCount << " operations: " << ex.what() << "\n";
+            resultsFile << opCount << ",ERROR: " << ex.what() << "\n";
+        }
+    }
+    
+    resultsFile.close();
+    std::cout << "\nOperations benchmark complete. Results saved to operations_benchmark.csv\n";
+}
 
 // -------------------------
 // Main Function: Dispatch based on Command-line Argument
 // -------------------------
 int main(int argc, char* argv[]) {
+    // Setup default operational parameters
+    // std::vector<int> defaultOperationCounts = {100, 500, 1000, 5000, 10000};    
+    std::vector<int> defaultOperationCounts = {10, 100};
+    int defaultConfigTestOperations = 100;
+    
+    // Parse command line arguments
     if (argc > 1) {
         std::string mode = argv[1];
-        if (mode == "unittest") {
-            run_unit_tests();
+        
+        if (mode == "operations") {
+            // Test with different operation counts
+            run_operations_benchmark(defaultOperationCounts);
             return 0;
-        } else if (mode == "profile") {
-            run_profiling_test();
+        }
+        else if (mode == "configurations") {
+            // Define configurations to test
+            std::vector<ORAMConfig> configs;
+            
+            // Test different tree heights (keeping other parameters default)
+            configs.push_back(ORAMConfig(4, BUCKET_CAPACITY_DEFAULT, STASH_LIMIT_DEFAULT, 3, QUEUE_BUCKET_CAPACITY_DEFAULT, QUEUE_STASH_LIMIT_DEFAULT));
+            configs.push_back(ORAMConfig(5, BUCKET_CAPACITY_DEFAULT, STASH_LIMIT_DEFAULT, 4, QUEUE_BUCKET_CAPACITY_DEFAULT, QUEUE_STASH_LIMIT_DEFAULT));
+            configs.push_back(ORAMConfig(6, BUCKET_CAPACITY_DEFAULT, STASH_LIMIT_DEFAULT, 5, QUEUE_BUCKET_CAPACITY_DEFAULT, QUEUE_STASH_LIMIT_DEFAULT));
+            configs.push_back(ORAMConfig(7, BUCKET_CAPACITY_DEFAULT, STASH_LIMIT_DEFAULT, 6, QUEUE_BUCKET_CAPACITY_DEFAULT, QUEUE_STASH_LIMIT_DEFAULT));
+            
+            // Test different bucket capacities (keeping tree height at default)
+            configs.push_back(ORAMConfig(TREE_HEIGHT_DEFAULT, 2, STASH_LIMIT_DEFAULT, QUEUE_TREE_HEIGHT_DEFAULT, 4, QUEUE_STASH_LIMIT_DEFAULT));
+            configs.push_back(ORAMConfig(TREE_HEIGHT_DEFAULT, 4, STASH_LIMIT_DEFAULT, QUEUE_TREE_HEIGHT_DEFAULT, 8, QUEUE_STASH_LIMIT_DEFAULT));
+            configs.push_back(ORAMConfig(TREE_HEIGHT_DEFAULT, 8, STASH_LIMIT_DEFAULT, QUEUE_TREE_HEIGHT_DEFAULT, 16, QUEUE_STASH_LIMIT_DEFAULT));
+            configs.push_back(ORAMConfig(TREE_HEIGHT_DEFAULT, 16, STASH_LIMIT_DEFAULT, QUEUE_TREE_HEIGHT_DEFAULT, 32, QUEUE_STASH_LIMIT_DEFAULT));
+            
+            // Test different stash limits (keeping tree height and bucket capacity at default)
+            configs.push_back(ORAMConfig(TREE_HEIGHT_DEFAULT, BUCKET_CAPACITY_DEFAULT, 50, QUEUE_TREE_HEIGHT_DEFAULT, QUEUE_BUCKET_CAPACITY_DEFAULT, 50));
+            configs.push_back(ORAMConfig(TREE_HEIGHT_DEFAULT, BUCKET_CAPACITY_DEFAULT, 100, QUEUE_TREE_HEIGHT_DEFAULT, QUEUE_BUCKET_CAPACITY_DEFAULT, 100));
+            configs.push_back(ORAMConfig(TREE_HEIGHT_DEFAULT, BUCKET_CAPACITY_DEFAULT, 200, QUEUE_TREE_HEIGHT_DEFAULT, QUEUE_BUCKET_CAPACITY_DEFAULT, 200));
+            configs.push_back(ORAMConfig(TREE_HEIGHT_DEFAULT, BUCKET_CAPACITY_DEFAULT, 500, QUEUE_TREE_HEIGHT_DEFAULT, QUEUE_BUCKET_CAPACITY_DEFAULT, 500));
+            
+            // Run tests with these configurations
+            run_configuration_benchmark(configs, defaultConfigTestOperations);
             return 0;
-        } else if (mode == "benchmark") {
-            int numOperations = 1000; // Default
-            if (argc > 2) {
-                numOperations = std::stoi(argv[2]);
+        }
+        else if (mode == "comparison") {
+            // Compare with baseline
+            compare_with_baseline(defaultOperationCounts);
+            return 0;
+        }
+        else if (mode == "full") {
+            // Run all tests
+            std::cout << "Running full benchmark suite...\n";
+            
+            // Test with different operation counts
+            run_operations_benchmark(defaultOperationCounts);
+            
+            // Define configurations to test
+            std::vector<ORAMConfig> configs;
+            
+            // Test different tree heights
+            configs.push_back(ORAMConfig(4, BUCKET_CAPACITY_DEFAULT, STASH_LIMIT_DEFAULT, 3, QUEUE_BUCKET_CAPACITY_DEFAULT, QUEUE_STASH_LIMIT_DEFAULT));
+            configs.push_back(ORAMConfig(5, BUCKET_CAPACITY_DEFAULT, STASH_LIMIT_DEFAULT, 4, QUEUE_BUCKET_CAPACITY_DEFAULT, QUEUE_STASH_LIMIT_DEFAULT));
+            configs.push_back(ORAMConfig(6, BUCKET_CAPACITY_DEFAULT, STASH_LIMIT_DEFAULT, 5, QUEUE_BUCKET_CAPACITY_DEFAULT, QUEUE_STASH_LIMIT_DEFAULT));
+            configs.push_back(ORAMConfig(7, BUCKET_CAPACITY_DEFAULT, STASH_LIMIT_DEFAULT, 6, QUEUE_BUCKET_CAPACITY_DEFAULT, QUEUE_STASH_LIMIT_DEFAULT));
+            
+            // Test different bucket capacities
+            configs.push_back(ORAMConfig(TREE_HEIGHT_DEFAULT, 2, STASH_LIMIT_DEFAULT, QUEUE_TREE_HEIGHT_DEFAULT, 4, QUEUE_STASH_LIMIT_DEFAULT));
+            configs.push_back(ORAMConfig(TREE_HEIGHT_DEFAULT, 4, STASH_LIMIT_DEFAULT, QUEUE_TREE_HEIGHT_DEFAULT, 8, QUEUE_STASH_LIMIT_DEFAULT));
+            configs.push_back(ORAMConfig(TREE_HEIGHT_DEFAULT, 8, STASH_LIMIT_DEFAULT, QUEUE_TREE_HEIGHT_DEFAULT, 16, QUEUE_STASH_LIMIT_DEFAULT));
+            configs.push_back(ORAMConfig(TREE_HEIGHT_DEFAULT, 16, STASH_LIMIT_DEFAULT, QUEUE_TREE_HEIGHT_DEFAULT, 32, QUEUE_STASH_LIMIT_DEFAULT));
+            
+            // Test different stash limits
+            configs.push_back(ORAMConfig(TREE_HEIGHT_DEFAULT, BUCKET_CAPACITY_DEFAULT, 50, QUEUE_TREE_HEIGHT_DEFAULT, QUEUE_BUCKET_CAPACITY_DEFAULT, 50));
+            configs.push_back(ORAMConfig(TREE_HEIGHT_DEFAULT, BUCKET_CAPACITY_DEFAULT, 100, QUEUE_TREE_HEIGHT_DEFAULT, QUEUE_BUCKET_CAPACITY_DEFAULT, 100));
+            configs.push_back(ORAMConfig(TREE_HEIGHT_DEFAULT, BUCKET_CAPACITY_DEFAULT, 200, QUEUE_TREE_HEIGHT_DEFAULT, QUEUE_BUCKET_CAPACITY_DEFAULT, 200));
+            configs.push_back(ORAMConfig(TREE_HEIGHT_DEFAULT, BUCKET_CAPACITY_DEFAULT, 500, QUEUE_TREE_HEIGHT_DEFAULT, QUEUE_BUCKET_CAPACITY_DEFAULT, 500));
+            
+            // Run tests with these configurations
+            run_configuration_benchmark(configs, defaultConfigTestOperations);
+            
+            // Compare with baseline
+            compare_with_baseline(defaultOperationCounts);
+            
+            std::cout << "\nFull benchmark suite completed.\n";
+            return 0;
+        }
+        else if (mode == "custom") {
+            if (argc < 6) {
+                std::cerr << "Custom mode requires at least 5 arguments:\n";
+                std::cerr << "tree-test custom <tree_height> <bucket_capacity> <stash_limit> <num_operations>\n";
+                return 1;
             }
-            run_comparison_benchmark(numOperations);
+            
+            int treeHeight = std::stoi(argv[2]);
+            int bucketCapacity = std::stoi(argv[3]);
+            int stashLimit = std::stoi(argv[4]);
+            int numOperations = std::stoi(argv[5]);
+            
+            // Create custom configuration
+            ORAMConfig customConfig(
+                treeHeight, 
+                bucketCapacity, 
+                stashLimit, 
+                treeHeight > 1 ? treeHeight - 1 : 1,  // Queue height is one less than map height
+                bucketCapacity * 2,  // Queue bucket capacity is double the map bucket capacity
+                stashLimit
+            );
+            
+            std::vector<ORAMConfig> configs = {customConfig};
+            run_configuration_benchmark(configs, numOperations);
             return 0;
-        } else if (mode == "treeheight") {
-            run_tree_height_impact_test();
-            return 0;
-        } else if (mode == "concurrency") {
-            int maxThreads = 8; // Default
-            if (argc > 2) {
-                maxThreads = std::stoi(argv[2]);
-            }
-            run_concurrency_test(maxThreads);
-            return 0;
-        } else if (mode == "integration") {
-            run_integration_test();
-            return 0;
+        }
+        else {
+            std::cerr << "Unknown mode: " << mode << "\n";
         }
     }
     
-    // Default: run the parallel test harness
-    try {
-        std::cout << "Running parallel test harness with performance metrics...\n";
-        NDNRouter router(true);
-        const int num_threads = 4;
-        std::vector<std::thread> threads;
-        
-        auto start = std::chrono::high_resolution_clock::now();
-        router.startMetricCollection();
-        
-        for (int i = 0; i < num_threads; ++i) {
-            threads.emplace_back(router_thread_func, std::ref(router), i+1);
-        }
-        
-        for (auto& t : threads) {
-            t.join();
-        }
-        
-        auto end = std::chrono::high_resolution_clock::now();
-        std::chrono::duration<double> diff = end - start;
-        router.stopMetricCollection(diff.count());
-        
-        router.getMetrics().printSummary("Parallel Test Results");
-        
-    } catch (const std::exception& ex) {
-        std::cerr << "Main error: " << ex.what() << "\n";
-    }
-    return 0;
-}
-
-// -------------------------
-// Existing Functions (with minor modifications)
-// -------------------------
-void router_thread_func(NDNRouter& router, int thread_id) {
-    try {
-        InterestPacket interest{"/example", "consumer_" + std::to_string(thread_id)};
-        router.handle_interest(interest);
-        DataPacket data{"/example", "Content from thread " + std::to_string(thread_id)};
-        router.handle_data(data);
-        Content served;
-        if (router.serve_content(served)) {
-            std::cout << "[Thread " << thread_id << "] Served content: " 
-                      << served.name << " -> " << served.data << "\n";
-        } else {
-            std::cout << "[Thread " << thread_id << "] No content served.\n";
-        }
-    } catch (const std::exception& ex) {
-        std::cerr << "[Thread " << thread_id << "] Error: " << ex.what() << "\n";
-    }
-}
-
-void run_unit_tests() {
-    std::cout << "Running unit tests...\n";
-    NDNRouter router;
-    // Basic test: send an interest and check FIB lookup.
-    InterestPacket interest{"/example", "unit_test_consumer"};
-    router.handle_interest(interest);
+    // Display usage information
+    std::cout << "Usage: " << argv[0] << " <mode> [options]\n";
+    std::cout << "Modes:\n";
+    std::cout << "  operations       - Test with different operation counts (" 
+              << defaultOperationCounts.front() << "-" << defaultOperationCounts.back() << ")\n";
+    std::cout << "  configurations   - Test with different ORAM configurations\n";
+    std::cout << "  comparison       - Compare with baseline implementation\n";
+    std::cout << "  full             - Run all benchmark tests\n";
+    std::cout << "  custom <th> <bc> <sl> <ops> - Run with custom parameters:\n";
+    std::cout << "                    <th>: Tree height\n";
+    std::cout << "                    <bc>: Bucket capacity\n";
+    std::cout << "                    <sl>: Stash limit\n";
+    std::cout << "                    <ops>: Number of operations\n";
     
-    // Test PIT insertion and lookup.
-    DataPacket data{"/example", "unit test data"};
-    router.handle_data(data);
-    Content served;
-    assert(router.serve_content(served) && "Unit test failed: Content was not served as expected.");
-    
-    std::cout << "Unit tests completed successfully.\n";
-}
-
-void run_profiling_test() {
-    std::cout << "Running profiling tests...\n";
-    NDNRouter router(true); // Enable metrics collection
-    const int iterations = 100;
-    
-    auto start = std::chrono::high_resolution_clock::now();
-    router.startMetricCollection();
-    
-    for (int i = 0; i < iterations; i++) {
-         InterestPacket interest{"/example", "profiling"};
-         router.handle_interest(interest);
-         DataPacket data{"/example", "Data " + std::to_string(i)};
-         router.handle_data(data);
-         Content served;
-         router.serve_content(served);
-    }
-    
-    auto end = std::chrono::high_resolution_clock::now();
-    std::chrono::duration<double> diff = end - start;
-    router.stopMetricCollection(diff.count());
-    
-    std::cout << "Average time per iteration: " << (diff.count() / iterations) * 1000 << " ms\n";
-    router.getMetrics().printSummary("Profiling Results");
-    router.getMetrics().saveToCSV("profiling_results.csv");
-}
-
-void run_integration_test() {
-    std::cout << "Running integration test with simulated network traffic...\n";
-    // Start a simple UDP server in a separate thread.
-    const int port = 12345;
-    std::thread server_thread([port]() {
-         int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
-         if (sockfd < 0) {
-             std::cerr << "Server socket creation failed.\n";
-             return;
-         }
-         sockaddr_in servaddr;
-         memset(&servaddr, 0, sizeof(servaddr));
-         servaddr.sin_family = AF_INET;
-         servaddr.sin_addr.s_addr = INADDR_ANY;
-         servaddr.sin_port = htons(port);
-         if (bind(sockfd, (const struct sockaddr *)&servaddr, sizeof(servaddr)) < 0) {
-             std::cerr << "Bind failed on server.\n";
-             close(sockfd);
-             return;
-         }
-         char buffer[1024];
-         sockaddr_in cliaddr;
-         socklen_t len = sizeof(cliaddr);
-         int n = recvfrom(sockfd, buffer, sizeof(buffer)-1, 0, (struct sockaddr *)&cliaddr, &len);
-         if (n < 0) {
-             std::cerr << "Server receive failed.\n";
-         } else {
-             buffer[n] = '\0';
-             std::cout << "Server received: " << buffer << "\n";
-         }
-         close(sockfd);
-    });
-
-    // Allow the server some time to start.
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-
-    // Client: send a test UDP packet.
-    int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
-    if (sockfd < 0) {
-         std::cerr << "Client socket creation failed.\n";
-         return;
-    }
-    sockaddr_in servaddr;
-    memset(&servaddr, 0, sizeof(servaddr));
-    servaddr.sin_family = AF_INET;
-    servaddr.sin_port = htons(port);
-    servaddr.sin_addr.s_addr = inet_addr("127.0.0.1");
-    const char* msg = "NDN integration test interest packet";
-    sendto(sockfd, msg, strlen(msg), 0, (const struct sockaddr *)&servaddr, sizeof(servaddr));
-    close(sockfd);
-
-    server_thread.join();
-    std::cout << "Integration test completed.\n";
-}
+    return 1;
+};
