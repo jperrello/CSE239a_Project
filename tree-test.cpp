@@ -965,9 +965,8 @@ void run_operations_benchmark(const std::vector<int>& operationCounts) {
 // -------------------------
 int main(int argc, char* argv[]) {
     // Setup default operational parameters
-    // std::vector<int> defaultOperationCounts = {100, 500, 1000, 5000, 10000};    
-    std::vector<int> defaultOperationCounts = {10, 100};
-    int defaultConfigTestOperations = 100;
+    std::vector<int> defaultOperationCounts = {100, 500, 1000, 5000, 10000};    
+    int defaultConfigTestOperations = 1000;
     
     // Parse command line arguments
     if (argc > 1) {
