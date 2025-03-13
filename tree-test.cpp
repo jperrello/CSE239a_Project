@@ -663,7 +663,7 @@ void run_configuration_benchmark(const std::vector<ORAMConfig>& configs, int num
                        << router.getMetrics().totalTimeSeconds << "\n";
             
             // Save detailed metrics
-            std::string filename = "config_th" + std::to_string(config.treeHeight) + 
+            std::string filename = "results/config_th" + std::to_string(config.treeHeight) + 
                                  "_bc" + std::to_string(config.bucketCapacity) + 
                                  "_sl" + std::to_string(config.stashLimit) + ".csv";
             router.getMetrics().saveToCSV(filename);
@@ -840,8 +840,8 @@ void compare_with_baseline(const std::vector<int>& operationCounts) {
                        << memoryOverhead << "\n";
             
             // Save detailed metrics
-            baselineRouter.getMetrics().saveToCSV("baseline_" + std::to_string(opCount) + ".csv");
-            privacyRouter.getMetrics().saveToCSV("privacy_" + std::to_string(opCount) + ".csv");
+            baselineRouter.getMetrics().saveToCSV("results/baseline_" + std::to_string(opCount) + ".csv");
+            privacyRouter.getMetrics().saveToCSV("results/privacy_" + std::to_string(opCount) + ".csv");
             
         } catch (const std::exception& ex) {
             std::cerr << "ERROR with " << opCount << " operations: " << ex.what() << "\n";
@@ -864,7 +864,7 @@ void run_operations_benchmark(const std::vector<int>& operationCounts) {
     ORAMConfig defaultConfig;
     
     // Create results file
-    std::ofstream resultsFile("operations_benchmark.csv");
+    std::ofstream resultsFile("results/operations_benchmark.csv");
     resultsFile << "OperationCount,ThroughputOpsPerSec,InterestLatencyMean,DataLatencyMean,RetrievalLatencyMean,MaxStashSize,TotalTimeSeconds\n";
     
     // Setup workload generator
@@ -947,7 +947,7 @@ void run_operations_benchmark(const std::vector<int>& operationCounts) {
                        << router.getMetrics().totalTimeSeconds << "\n";
             
             // Save detailed metrics
-            std::string filename = "operations_" + std::to_string(opCount) + ".csv";
+            std::string filename = "results/operations_" + std::to_string(opCount) + ".csv";
             router.getMetrics().saveToCSV(filename);
             
         } catch (const std::exception& ex) {
@@ -965,8 +965,9 @@ void run_operations_benchmark(const std::vector<int>& operationCounts) {
 // -------------------------
 int main(int argc, char* argv[]) {
     // Setup default operational parameters
-    std::vector<int> defaultOperationCounts = {100, 500, 1000, 5000, 10000};
-    int defaultConfigTestOperations = 1000;
+    // std::vector<int> defaultOperationCounts = {100, 500, 1000, 5000, 10000};    
+    std::vector<int> defaultOperationCounts = {10, 100};
+    int defaultConfigTestOperations = 100;
     
     // Parse command line arguments
     if (argc > 1) {
