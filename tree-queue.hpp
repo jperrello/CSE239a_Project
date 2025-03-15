@@ -10,36 +10,34 @@
 #include <string>
 #include <cassert>
 #include <mutex>
+#include <thread>
+#include <chrono>
 
 #include "crypto.hpp"
 
 // -------------------------
 // Configuration Parameters
 // -------------------------
-constexpr int QUEUE_TREE_HEIGHT_DEFAULT = 4;       // Default height of the ORAM tree for the queue
-constexpr int QUEUE_BUCKET_CAPACITY_DEFAULT = 8;   // Default maximum number of blocks per bucket
-constexpr size_t QUEUE_STASH_LIMIT_DEFAULT = 100;  // Default maximum allowed stash size
+constexpr int QUEUE_TREE_HEIGHT_DEFAULT = 8;       // Default tree height for the queue
+constexpr int QUEUE_BUCKET_CAPACITY_DEFAULT = 12;     // Default maximum number of blocks per bucket
+constexpr size_t QUEUE_STASH_LIMIT_DEFAULT = 100;    // Default maximum allowed stash size
 
 // -------------------------
 // QueueBlock and QueueBucket Structures
 // -------------------------
-
-// QueueBlock:
-// Represents an item in the queue. The item is stored as an encrypted string.
 template<typename T>
 struct QueueBlock {
-    bool valid; // valid data
-    T data;     // Encrypted item.
+    bool valid;
+    T data;
+    size_t leaf; // Assigned leaf index
 
-    QueueBlock() : valid(false), data() {}
-    QueueBlock(const T& d) : valid(true), data(d) {}
+    QueueBlock() : valid(false), data(), leaf(0) {}
+    QueueBlock(const T& d, size_t leaf_) : valid(true), data(d), leaf(leaf_) {}
 };
 
-// A bucket in the queue tree, containing multiple blocks.
 template<typename T>
 struct QueueBucket {
     std::vector<QueueBlock<T>> blocks;
-    
     QueueBucket(int capacity = QUEUE_BUCKET_CAPACITY_DEFAULT) {
         blocks.resize(capacity);
     }
@@ -48,29 +46,26 @@ struct QueueBucket {
 // -------------------------
 // ObliviousQueue Class (PathORAM-based for Queue)
 // -------------------------
-// Implements a queue using a PathORAM-based approach.
-// The push and pop operations perform full-path accesses,
-// using a stash to buffer items, then evicting them back into the tree.
-
 template<typename T>
 class ObliviousQueue {
 private:
-    std::vector<QueueBucket<T>> tree;      // The ORAM tree for the queue (1-indexed).
-    int numBuckets;                        // Total number of buckets in the tree.
-    int treeHeight;                        // Height of the tree.
-    std::vector<QueueBlock<T>> stash;      // Stash to temporarily hold blocks.
-    size_t stashLimit;                     // Maximum allowed stash size.
-    int bucketCapacity;                    // Bucket capacity (blocks per bucket)
-    mutable std::mutex mtx;                // Mutex for thread-safe operations.
+    std::vector<QueueBucket<T>> tree;      // The ORAM tree (1-indexed)
+    int numBuckets;                        
+    int treeHeight;                        
+    std::vector<QueueBlock<T>> stash;      
+    size_t stashLimit;                     
+    int bucketCapacity;                    
+    mutable std::mutex mtx;                
 
-    // compute_numBuckets:
-    // Computes the total number of nodes in a full binary tree of given height.
+    // Background eviction thread components.
+    std::atomic<bool> evictionThreadRunning;
+    std::thread evictionThread;
+
     int compute_numBuckets(int height) {
         return (1 << (height + 1)) - 1;
     }
 
-    // get_path_indices:
-    // Returns the indices (in the tree) of buckets along the path from the root to the given leaf.
+    // Returns the path from a given leaf to the root.
     std::vector<int> get_path_indices(size_t leaf) {
         std::vector<int> path;
         int index = (1 << treeHeight) - 1 + leaf;
@@ -82,10 +77,12 @@ private:
         return path;
     }
 
-    // read_path:
-    // Reads all valid blocks along the specified path into the stash.
-    // Marks the corresponding blocks in the tree as invalid after reading.
+    // Reads blocks along the path into the stash.
     void read_path(const std::vector<int>& path) {
+        if (stash.size() > stashLimit * 0.75) {
+            std::cerr << "[ObliviousQueue] WARNING: Stash approaching limit. Running eviction.\n";
+            full_eviction();
+        }
         for (int idx : path) {
             for (auto& blk : tree[idx].blocks) {
                 if (blk.valid) {
@@ -99,94 +96,161 @@ private:
         }
     }
 
-    // Evicts blocks from stash to tree along the path.
+    // Eviction routine along a specific path.
     void write_path(const std::vector<int>& path) {
-        const int MAX_EVICTION_ATTEMPTS = 10;
-        int attempts = 0;
-        bool evictionPerformed;
-
-        do {
-            evictionPerformed = false;
-            for (int idx : path) {
-                QueueBucket<T>& bucket = tree[idx];
-
-                for (auto& slot : bucket.blocks) {
-                    if (!slot.valid && !stash.empty()) {
-                        slot = stash.front();
-                        stash.erase(stash.begin());
-                        evictionPerformed = true;
+        while (stash.size() > stashLimit * 0.5) {
+            size_t prevSize = stash.size();
+            size_t evictedCount = 0;
+            for (int bucketIndex : path) {
+                QueueBucket<T>& bucket = tree[bucketIndex];
+                for (auto &slot : bucket.blocks) {
+                    if (!slot.valid) {
+                        auto it = std::find_if(stash.begin(), stash.end(), [&](const QueueBlock<T>& blk) {
+                            std::vector<int> blkPath = get_path_indices(blk.leaf);
+                            return std::find(blkPath.begin(), blkPath.end(), bucketIndex) != blkPath.end();
+                        });
+                        if (it != stash.end()) {
+                            slot = *it;
+                            stash.erase(it);
+                            evictedCount++;
+                        }
                     }
                 }
             }
-            attempts++;
-        } while (evictionPerformed && attempts < MAX_EVICTION_ATTEMPTS);
+            std::cerr << "[Eviction] write_path round: prev stash size = " << prevSize 
+                      << ", evicted = " << evictedCount 
+                      << ", new stash size = " << stash.size() << "\n";
+            if (evictedCount == 0) {
+                full_eviction();
+            }
+            if (stash.size() >= prevSize) {
+                std::cerr << "[Eviction] write_path: no progress made, breaking loop\n";
+                break;
+            }
+        }
+    }
+    
+    // Full eviction over the entire tree.
+    // If no progress is made, reassign new random leaves to stuck blocks.
+    void full_eviction() {
+        while (stash.size() > stashLimit * 0.5) {
+            size_t prevSize = stash.size();
+            size_t evictedCount = 0;
+            for (int idx = 1; idx <= numBuckets; idx++) {
+                QueueBucket<T>& bucket = tree[idx];
+                for (auto &slot : bucket.blocks) {
+                    if (!slot.valid) {
+                        auto it = std::find_if(stash.begin(), stash.end(), [&](const QueueBlock<T>& blk) {
+                            std::vector<int> blkPath = get_path_indices(blk.leaf);
+                            return std::find(blkPath.begin(), blkPath.end(), idx) != blkPath.end();
+                        });
+                        if (it != stash.end()) {
+                            slot = *it;
+                            stash.erase(it);
+                            evictedCount++;
+                        }
+                    }
+                }
+            }
+            std::cerr << "[Eviction] full_eviction round: prev stash size = " << prevSize 
+                      << ", evicted = " << evictedCount 
+                      << ", new stash size = " << stash.size() << "\n";
+            if (evictedCount == 0 || stash.size() >= prevSize) {
+                std::cerr << "[Eviction] full_eviction: no progress made, remapping stuck blocks\n";
+                for (auto &blk : stash) {
+                    blk.leaf = secure_random_index(1 << treeHeight);
+                }
+                if (stash.size() >= prevSize) {
+                    std::cerr << "[Eviction] full_eviction: still no progress after remapping, breaking loop\n";
+                    break;
+                }
+            }
+        }
     }
 
 public:
-    // Constructor:
-    // Initializes the ORAM tree for the queue and sets the stash limit.
+    // Constructor: initializes tree and starts background eviction.
     ObliviousQueue(int height = QUEUE_TREE_HEIGHT_DEFAULT, 
                    size_t stash_limit = QUEUE_STASH_LIMIT_DEFAULT,
                    int bucket_capacity = QUEUE_BUCKET_CAPACITY_DEFAULT)
       : treeHeight(height), stashLimit(stash_limit), bucketCapacity(bucket_capacity)
     {
         numBuckets = compute_numBuckets(treeHeight);
-        tree.resize(numBuckets + 1); // Use 1-based indexing.
-        
-        // Initialize buckets with the specified capacity
+        tree.resize(numBuckets + 1);
         for (int i = 1; i <= numBuckets; i++) {
             tree[i] = QueueBucket<T>(bucketCapacity);
         }
+        
+        evictionThreadRunning = true;
+        evictionThread = std::thread([this]() {
+            while (evictionThreadRunning) {
+                {
+                    std::lock_guard<std::mutex> lock(mtx);
+                    if (stash.size() > stashLimit * 0.75) {
+                        full_eviction();
+                    }
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+        });
     }
 
-    // oblivious_push:
+    // Destructor: stops background eviction thread.
+    ~ObliviousQueue() {
+        evictionThreadRunning = false;
+        if (evictionThread.joinable()) {
+            evictionThread.join();
+        }
+    }
+
+    void trigger_full_eviction() {
+        std::lock_guard<std::mutex> lock(mtx);
+        full_eviction();
+    }
+
     // Pushes an item into the queue.
-    // Encrypts the item using the updated crypto function (AES-GCM) before enqueuing.
     void oblivious_push(const T& item) {
         std::lock_guard<std::mutex> lock(mtx);
-
         size_t leaf = secure_random_index(1 << treeHeight);
         std::vector<int> path = get_path_indices(leaf);
         read_path(path);
-
-        stash.push_back(QueueBlock<T>(secure_encrypt_string(item)));
-
+        write_path(path);
+        stash.push_back(QueueBlock<T>(secure_encrypt_string(item), leaf));
+        full_eviction();
         if (stash.size() > stashLimit) {
             throw std::runtime_error("Stash overflow after push in queue");
         }
-        write_path(path);
     }
     
+    // Pops an item from the queue.
     bool oblivious_pop(T& item) {
-        std::lock_guard<std::mutex> lock(mtx); // Ensure thread safety.
-
+        std::lock_guard<std::mutex> lock(mtx);
         size_t leaf = secure_random_index(1 << treeHeight);
         std::vector<int> path = get_path_indices(leaf);
         read_path(path);
         bool found = false;
         if (!stash.empty()) {
-            QueueBlock<T> blk = stash.front();
-            stash.erase(stash.begin());
+            auto it = stash.begin();
+            QueueBlock<T> blk = *it;
+            stash.erase(it);
             if (blk.valid) {
                 item = secure_decrypt_string(blk.data);
                 found = true;
             }
         }
         write_path(path);
+        full_eviction();
         return found;
     }
     
-    // Get current stash size for metrics
     size_t getStashSize() const {
         std::lock_guard<std::mutex> lock(mtx);
         return stash.size();
     }
     
-    // Get parameters for metrics
     int getTreeHeight() const { return treeHeight; }
     int getBucketCapacity() const { return bucketCapacity; }
     size_t getStashLimit() const { return stashLimit; }
 };
 
 #endif
-

@@ -360,40 +360,74 @@ public:
 
     void handle_data(const DataPacket& dataPacket) {
         auto start = std::chrono::high_resolution_clock::now();
+    
+        //  Monitor stash size across FIB, PIT, and CS before proceeding
+        size_t fibStashSize = FIB.getStashSize();
+        size_t pitStashSize = PIT.getStashSize();
+        size_t csStashSize = CS.getStashSize();
+        size_t totalStashSize = fibStashSize + pitStashSize + csStashSize;
+
         
+    
+        //  Warning if stash is getting close to the limit
+        if (totalStashSize > STASH_LIMIT_DEFAULT * 0.9) {
+            std::cerr << "[NDNRouter] WARNING: Stash usage approaching overflow. "
+                      << "Total Stash: " << totalStashSize << "/" << STASH_LIMIT_DEFAULT << "\n";
+        }
+    
+        //  Hard stop if stash is at full capacity
+        if (totalStashSize > STASH_LIMIT_DEFAULT) {
+            std::cerr << "[NDNRouter] ERROR: Stash overflow detected! Delaying operations.\n";
+            return;
+        }
+    
         std::cout << "[NDNRouter] Handling data for \"" << dataPacket.contentName << "\"\n";
         std::string contentStr = dataPacket.contentName + ":" + dataPacket.data;
-        CS.oblivious_push(contentStr);
-        
+    
+        //  Ensure eviction before pushing to CS
+        if (CS.getStashSize() > STASH_LIMIT_DEFAULT * 0.75) {
+            std::cerr << "[NDNRouter] WARNING: CS stash at 75% limit, triggering eviction.\n";
+            CS.trigger_full_eviction();
+        }
+    
+        //  Only push data if stash is under 75%
+        if (CS.getStashSize() < STASH_LIMIT_DEFAULT * 0.75) {
+            CS.oblivious_push(contentStr);
+        } else {
+            std::cerr << "[NDNRouter] ERROR: CS stash too full, cannot insert new data.\n";
+            return;
+        }
+    
+        //  Look for a pending PIT entry
         std::string consumer;
         if (PIT.oblivious_lookup(dataPacket.contentName, consumer)) {
             std::cout << "[NDNRouter] Found PIT entry for \"" << dataPacket.contentName
                       << "\" with consumer \"" << consumer << "\"\n";
-            PIT.oblivious_insert(dataPacket.contentName, "dummy");
+            PIT.oblivious_insert(dataPacket.contentName, "dummy");  // Simulate cache resolution
         } else {
             std::cout << "[NDNRouter] No PIT entry for \"" << dataPacket.contentName << "\"\n";
         }
-        
+    
+        // Performance Metrics
         auto end = std::chrono::high_resolution_clock::now();
         std::chrono::duration<double, std::micro> diff = end - start;
         metrics.dataLatencies.push_back(diff.count());
         metrics.totalOperations++;
-        
-        // Update stash metrics
-        size_t pitStashSize = PIT.getStashSize();
-        size_t csStashSize = CS.getStashSize();
-        size_t totalStashSize = pitStashSize + csStashSize;
-        metrics.stashSizeHistory.push_back(totalStashSize);
-        metrics.maxStashSize = std::max(metrics.maxStashSize, totalStashSize);
-        
-        // Update memory usage
-        size_t currentMemory = getCurrentMemoryUsage();
-        metrics.peakMemoryUsage = std::max(metrics.peakMemoryUsage, currentMemory);
     }
+    
+    
 
     bool serve_content(Content &servedContent) {
         auto start = std::chrono::high_resolution_clock::now();
-        
+    
+        // Run full eviction proactively at 75% stash usage
+        if (FIB.getStashSize() > STASH_LIMIT_DEFAULT * 0.75) {
+            std::cerr << "[NDNRouter] Running full eviction due to high stash usage.\n";
+            FIB.trigger_full_eviction();  
+            PIT.trigger_full_eviction();
+            CS.trigger_full_eviction();
+        }
+    
         std::string contentStr;
         bool success = false;
         if (CS.oblivious_pop(contentStr)) {
@@ -407,23 +441,15 @@ public:
         } else {
             std::cout << "[NDNRouter] No content to serve.\n";
         }
-        
+    
         auto end = std::chrono::high_resolution_clock::now();
         std::chrono::duration<double, std::micro> diff = end - start;
         metrics.retrievalLatencies.push_back(diff.count());
         metrics.totalOperations++;
-        
-        // Update stash metrics
-        size_t csStashSize = CS.getStashSize();
-        metrics.stashSizeHistory.push_back(csStashSize);
-        metrics.maxStashSize = std::max(metrics.maxStashSize, csStashSize);
-        
-        // Update memory usage
-        size_t currentMemory = getCurrentMemoryUsage();
-        metrics.peakMemoryUsage = std::max(metrics.peakMemoryUsage, currentMemory);
-        
+    
         return success;
     }
+    
     
     const PerformanceMetrics& getMetrics() const {
         return metrics;
