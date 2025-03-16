@@ -449,7 +449,14 @@ public:
     
         return success;
     }
-    
+
+    // Trigger full eviction on all data structures
+    void trigger_full_eviction() {
+        std::cout << "[NDNRouter] Manually triggering full eviction on all data structures\n";
+        FIB.trigger_full_eviction();
+        PIT.trigger_full_eviction();
+        CS.trigger_full_eviction();
+    }
     
     const PerformanceMetrics& getMetrics() const {
         return metrics;
@@ -886,12 +893,22 @@ void run_operations_benchmark(const std::vector<int>& operationCounts) {
     std::cout << "\n=========== OPERATIONS SCALING BENCHMARK ===========\n";
     std::cout << "Testing performance with different operation counts\n";
     
-    // Default configuration
-    ORAMConfig defaultConfig;
+    // Create results directory if it doesn't exist
+    system("mkdir -p results");
+    
+    // Use an enhanced configuration with larger stash and bucket capacity
+    ORAMConfig enhancedConfig(
+        TREE_HEIGHT_DEFAULT,          // Default tree height
+        BUCKET_CAPACITY_DEFAULT,      // Already updated in the header files
+        STASH_LIMIT_DEFAULT,          // Already updated in the header files
+        QUEUE_TREE_HEIGHT_DEFAULT,    // Default queue tree height
+        QUEUE_BUCKET_CAPACITY_DEFAULT, // Already updated in the header files
+        QUEUE_STASH_LIMIT_DEFAULT     // Already updated in the header files
+    );
     
     // Create results file
     std::ofstream resultsFile("results/operations_benchmark.csv");
-    resultsFile << "OperationCount,ThroughputOpsPerSec,InterestLatencyMean,DataLatencyMean,RetrievalLatencyMean,MaxStashSize,TotalTimeSeconds\n";
+    resultsFile << "OperationCount,ThroughputOpsPerSec,InterestLatencyMean,DataLatencyMean,RetrievalLatencyMean,MaxStashSize,TotalTimeSeconds,ErrorCount\n";
     
     // Setup workload generator
     WorkloadGenerator workloadGen;
@@ -899,27 +916,80 @@ void run_operations_benchmark(const std::vector<int>& operationCounts) {
     for (int opCount : operationCounts) {
         std::cout << "\nRunning benchmark with " << opCount << " operations...\n";
         
+        // Create router with enhanced configuration
+        NDNRouter router(true, enhancedConfig);
+        
+        // Statistics tracking
+        int successfulOperations = 0;
+        int errorCount = 0;
+        auto start = std::chrono::high_resolution_clock::now();
+        router.startMetricCollection();
+        
         try {
-            // Create router with default configuration
-            NDNRouter router(true, defaultConfig);
+            // Perform operations in very small batches with frequent eviction
+            const int batchSize = 25; // Smaller batch size
+            const int evictionInterval = 10; // Even more frequent eviction checks
             
-            auto start = std::chrono::high_resolution_clock::now();
-            router.startMetricCollection();
-            
-            for (int i = 0; i < opCount; i++) {
-                if (i % 100 == 0 && i > 0) {
-                    std::cout << "Completed " << i << "/" << opCount << " operations\r";
-                    std::cout.flush();
+            for (int i = 0; i < opCount; i += batchSize) {
+                int currentBatchSize = std::min(batchSize, opCount - i);
+                
+                for (int j = 0; j < currentBatchSize; j++) {
+                    int currentOp = i + j;
+                    if (currentOp % 50 == 0 && currentOp > 0) {
+                        std::cout << "Completed " << currentOp << "/" << opCount << " operations\r";
+                        std::cout.flush();
+                    }
+                    
+                    try {
+                        // Every few operations, check stash size and trigger eviction if needed
+                        if (currentOp % evictionInterval == 0 && currentOp > 0) {
+                            size_t currentStashSize = router.getMetrics().maxStashSize;
+                            if (currentStashSize > enhancedConfig.stashLimit * 0.7) {
+                                std::cout << "\nHigh stash utilization detected at operation " << currentOp 
+                                          << ": " << currentStashSize 
+                                          << "/" << enhancedConfig.stashLimit << ". Running manual eviction.\n";
+                                router.trigger_full_eviction();
+                                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                            }
+                        }
+                        
+                        // Execute the NDN operations
+                        InterestPacket interest = workloadGen.generateInterest();
+                        router.handle_interest(interest);
+                        
+                        DataPacket data = workloadGen.generateData(interest.contentName);
+                        router.handle_data(data);
+                        
+                        Content content;
+                        router.serve_content(content);
+                        
+                        successfulOperations += 3; // Count all three operations
+                    }
+                    catch (const std::exception& ex) {
+                        std::cerr << "\nERROR at operation " << currentOp << ": " << ex.what() << "\n";
+                        errorCount++;
+                        
+                        // Try to recover by triggering a full eviction
+                        try {
+                            router.trigger_full_eviction();
+                            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                        } catch (...) {
+                            std::cerr << "Recovery attempt failed. Continuing with next batch.\n";
+                            break; // Move to next batch
+                        }
+                    }
                 }
                 
-                InterestPacket interest = workloadGen.generateInterest();
-                router.handle_interest(interest);
+                // Give background eviction thread a chance to run between batches
+                std::this_thread::sleep_for(std::chrono::milliseconds(25));
                 
-                DataPacket data = workloadGen.generateData(interest.contentName);
-                router.handle_data(data);
-                
-                Content content;
-                router.serve_content(content);
+                // Force eviction between batches
+                try {
+                    router.trigger_full_eviction();
+                } catch (const std::exception& ex) {
+                    std::cerr << "\nERROR during batch eviction: " << ex.what() << "\n";
+                    errorCount++;
+                }
             }
             
             auto end = std::chrono::high_resolution_clock::now();
@@ -927,7 +997,7 @@ void run_operations_benchmark(const std::vector<int>& operationCounts) {
             router.stopMetricCollection(diff.count());
             
             // Calculate metrics
-            double throughput = router.getMetrics().totalOperations / router.getMetrics().totalTimeSeconds;
+            double throughput = successfulOperations / router.getMetrics().totalTimeSeconds;
             
             double avgInterestLatency = 0.0;
             if (!router.getMetrics().interestLatencies.empty()) {
@@ -956,6 +1026,9 @@ void run_operations_benchmark(const std::vector<int>& operationCounts) {
             size_t maxStashSize = router.getMetrics().maxStashSize;
             
             // Print results
+            std::cout << "\nBenchmark Results for " << opCount << " operations:\n";
+            std::cout << "Successful Operations: " << successfulOperations << "\n";
+            std::cout << "Errors Encountered: " << errorCount << "\n";
             std::cout << "Throughput: " << throughput << " ops/sec\n";
             std::cout << "Avg Interest Latency: " << avgInterestLatency << " μs\n";
             std::cout << "Avg Data Latency: " << avgDataLatency << " μs\n";
@@ -970,15 +1043,16 @@ void run_operations_benchmark(const std::vector<int>& operationCounts) {
                        << avgDataLatency << ","
                        << avgRetrievalLatency << ","
                        << maxStashSize << ","
-                       << router.getMetrics().totalTimeSeconds << "\n";
+                       << router.getMetrics().totalTimeSeconds << ","
+                       << errorCount << "\n";
             
             // Save detailed metrics
             std::string filename = "results/operations_" + std::to_string(opCount) + ".csv";
             router.getMetrics().saveToCSV(filename);
             
         } catch (const std::exception& ex) {
-            std::cerr << "ERROR with " << opCount << " operations: " << ex.what() << "\n";
-            resultsFile << opCount << ",ERROR: " << ex.what() << "\n";
+            std::cerr << "FATAL ERROR with " << opCount << " operations: " << ex.what() << "\n";
+            resultsFile << opCount << ",ERROR:," << ex.what() << ",,,,,1\n";
         }
     }
     

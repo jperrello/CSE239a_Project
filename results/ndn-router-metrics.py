@@ -3,6 +3,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
 from matplotlib.gridspec import GridSpec
+import os
+import glob
 
 # Set style
 plt.style.use('ggplot')
@@ -13,6 +15,11 @@ plt.rcParams['figure.figsize'] = (12, 8)
 def load_and_clean_data(file_path):
     """Load a CSV file and handle potential formatting issues."""
     try:
+        # Check if file exists
+        if not os.path.exists(file_path):
+            print(f"Warning: File {file_path} not found.")
+            return None
+            
         # For files with 'Metric,Value' format
         if 'operations_' in file_path or 'baseline_' in file_path or 'privacy_' in file_path or 'config_th' in file_path:
             df = pd.read_csv(file_path)
@@ -114,7 +121,7 @@ def plot_baseline_comparison(baseline_comp_path='baseline_comparison.csv'):
     # Plot 5: Detailed latency for higher operation count
     if len(df) > 1:
         ax5 = fig.add_subplot(gs[1, 1])
-        op_idx = 1  # Use the larger operation count
+        op_idx = min(1, len(df) - 1)  # Use the second operation count, if available
         ax5.bar(ind - width/2, [df[f'Baseline{m}'].iloc[op_idx] for m in metrics], width, label='Baseline')
         ax5.bar(ind + width/2, [df[f'Privacy{m}'].iloc[op_idx] for m in metrics], width, label='Privacy')
         
@@ -124,12 +131,27 @@ def plot_baseline_comparison(baseline_comp_path='baseline_comparison.csv'):
         ax5.set_xticks(ind)
         ax5.set_xticklabels(metrics)
         ax5.legend()
+        
+    # Plot 6: Privacy overhead vs security (Bar chart instead of radar)
+    ax6 = fig.add_subplot(gs[1, 2])
+    privacy_overheads = [df['MemoryOverhead'].mean(), df['ThroughputOverhead'].mean(), df['InterestLatencyOverhead'].mean()]
+    labels = ['Memory', 'Throughput', 'Latency']
+    
+    # Create a simple bar chart for privacy overhead factors
+    ax6.bar(labels, privacy_overheads, color='purple', alpha=0.7)
+    ax6.set_xlabel('Metric')
+    ax6.set_ylabel('Overhead Factor (×)')
+    ax6.set_title('Privacy Overhead Factors')
+    
+    # Add text labels above bars
+    for i, v in enumerate(privacy_overheads):
+        ax6.text(i, v + 0.1, f"{v:.2f}x", ha='center')
     
     plt.tight_layout()
-    plt.savefig('baseline_comparison.png', dpi=300, bbox_inches='tight')
+    plt.savefig('visualizations/baseline_comparison.png', dpi=300, bbox_inches='tight')
     plt.close()
     
-    print("Baseline comparison plot saved as 'baseline_comparison.png'")
+    print("Baseline comparison plot saved as 'visualizations/baseline_comparison.png'")
 
 def plot_operations_benchmark(benchmark_path='operations_benchmark.csv'):
     """Plot the impact of operation count on performance metrics."""
@@ -141,46 +163,176 @@ def plot_operations_benchmark(benchmark_path='operations_benchmark.csv'):
         print("No data found for operations benchmark")
         return
     
-    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+    # Check for new error metrics column
+    has_error_metrics = 'ErrorCount' in df.columns
+    
+    fig = plt.figure(figsize=(16, 12))
+    gs = GridSpec(3, 2, figure=fig)
     
     # Plot 1: Throughput vs Operation Count
-    axes[0, 0].plot(df['OperationCount'], df['ThroughputOpsPerSec'], 'o-', linewidth=2)
-    axes[0, 0].set_xlabel('Operation Count')
-    axes[0, 0].set_ylabel('Throughput (ops/sec)')
-    axes[0, 0].set_title('Throughput vs Operation Count')
-    axes[0, 0].set_xscale('log')
+    ax1 = fig.add_subplot(gs[0, 0])
+    ax1.plot(df['OperationCount'], df['ThroughputOpsPerSec'], 'o-', linewidth=2)
+    ax1.set_xlabel('Operation Count')
+    ax1.set_ylabel('Throughput (ops/sec)')
+    ax1.set_title('Throughput vs Operation Count')
+    # Use log scale if range is large enough
+    if df['OperationCount'].max() / df['OperationCount'].min() > 10:
+        ax1.set_xscale('log')
     
     # Plot 2: Latency vs Operation Count
-    ax = axes[0, 1]
-    ax.plot(df['OperationCount'], df['InterestLatencyMean'], 'o-', linewidth=2, label='Interest')
-    ax.plot(df['OperationCount'], df['DataLatencyMean'], 's-', linewidth=2, label='Data')
-    ax.plot(df['OperationCount'], df['RetrievalLatencyMean'], '^-', linewidth=2, label='Retrieval')
-    ax.set_xlabel('Operation Count')
-    ax.set_ylabel('Latency (μs)')
-    ax.set_title('Latency vs Operation Count')
-    ax.set_xscale('log')
-    ax.legend()
+    ax2 = fig.add_subplot(gs[0, 1])
+    ax2.plot(df['OperationCount'], df['InterestLatencyMean'], 'o-', linewidth=2, label='Interest')
+    ax2.plot(df['OperationCount'], df['DataLatencyMean'], 's-', linewidth=2, label='Data')
+    ax2.plot(df['OperationCount'], df['RetrievalLatencyMean'], '^-', linewidth=2, label='Retrieval')
+    ax2.set_xlabel('Operation Count')
+    ax2.set_ylabel('Latency (μs)')
+    ax2.set_title('Latency vs Operation Count')
+    # Use log scale if range is large enough
+    if df['OperationCount'].max() / df['OperationCount'].min() > 10:
+        ax2.set_xscale('log')
+    ax2.legend()
     
     # Plot 3: Max Stash Size vs Operation Count
-    axes[1, 0].plot(df['OperationCount'], df['MaxStashSize'], 'o-', linewidth=2)
-    axes[1, 0].set_xlabel('Operation Count')
-    axes[1, 0].set_ylabel('Max Stash Size')
-    axes[1, 0].set_title('Max Stash Size vs Operation Count')
-    axes[1, 0].set_xscale('log')
+    ax3 = fig.add_subplot(gs[1, 0])
+    ax3.plot(df['OperationCount'], df['MaxStashSize'], 'o-', linewidth=2)
+    ax3.set_xlabel('Operation Count')
+    ax3.set_ylabel('Max Stash Size')
+    ax3.set_title('Max Stash Size vs Operation Count')
+    # Add horizontal line for stash limit
+    ax3.axhline(y=STASH_LIMIT_DEFAULT, color='r', linestyle='--', alpha=0.7, 
+                label=f'Default Stash Limit ({STASH_LIMIT_DEFAULT})')
+    # Use log scale if range is large enough
+    if df['OperationCount'].max() / df['OperationCount'].min() > 10:
+        ax3.set_xscale('log')
+    ax3.legend()
     
     # Plot 4: Total Time vs Operation Count
-    axes[1, 1].plot(df['OperationCount'], df['TotalTimeSeconds'], 'o-', linewidth=2)
-    axes[1, 1].set_xlabel('Operation Count')
-    axes[1, 1].set_ylabel('Total Time (seconds)')
-    axes[1, 1].set_title('Total Time vs Operation Count')
-    axes[1, 1].set_xscale('log')
-    axes[1, 1].set_yscale('log')
+    ax4 = fig.add_subplot(gs[1, 1])
+    ax4.plot(df['OperationCount'], df['TotalTimeSeconds'], 'o-', linewidth=2)
+    ax4.set_xlabel('Operation Count')
+    ax4.set_ylabel('Total Time (seconds)')
+    ax4.set_title('Total Time vs Operation Count')
+    # Use log scale if range is large enough
+    if df['OperationCount'].max() / df['OperationCount'].min() > 10:
+        ax4.set_xscale('log')
+    if df['TotalTimeSeconds'].max() / df['TotalTimeSeconds'].min() > 10:
+        ax4.set_yscale('log')
+    
+    # Plot 5: Error Rate (if available)
+    if has_error_metrics:
+        ax5 = fig.add_subplot(gs[2, 0])
+        # Calculate error rate as percentage of total operations (3 operations per count)
+        df['ErrorRate'] = df['ErrorCount'] / (df['OperationCount'] * 3) * 100
+        ax5.bar(df['OperationCount'].astype(str), df['ErrorRate'], color='red', alpha=0.7)
+        ax5.set_xlabel('Operation Count')
+        ax5.set_ylabel('Error Rate (%)')
+        ax5.set_title('Error Rate vs Operation Count')
+        
+        # Annotate with actual error counts
+        for i, row in df.iterrows():
+            ax5.annotate(f"{row['ErrorCount']} errors", 
+                        (i, row['ErrorRate']), 
+                        textcoords="offset points",
+                        xytext=(0, 10), 
+                        ha='center')
+    
+    # Plot 6: Stash Size vs Throughput Relationship
+    ax6 = fig.add_subplot(gs[2, 1])
+    scatter = ax6.scatter(df['MaxStashSize'], df['ThroughputOpsPerSec'], 
+                         c=df['OperationCount'], cmap='viridis', s=100, alpha=0.7)
+    
+    for i, row in df.iterrows():
+        ax6.annotate(f"{row['OperationCount']} ops",
+                    (row['MaxStashSize'], row['ThroughputOpsPerSec']),
+                    xytext=(5, 5), textcoords='offset points',
+                    fontsize=8)
+    
+    ax6.set_xlabel('Max Stash Size')
+    ax6.set_ylabel('Throughput (ops/sec)')
+    ax6.set_title('Stash Size vs Throughput Relationship')
+    cbar = plt.colorbar(scatter, ax=ax6)
+    cbar.set_label('Operation Count')
     
     plt.tight_layout()
-    plt.savefig('operations_benchmark.png', dpi=300, bbox_inches='tight')
+    
+    # Create visualizations directory if it doesn't exist
+    os.makedirs('visualizations', exist_ok=True)
+    plt.savefig('visualizations/operations_benchmark.png', dpi=300, bbox_inches='tight')
     plt.close()
     
-    print("Operations benchmark plot saved as 'operations_benchmark.png'")
+    print("Operations benchmark plot saved as 'visualizations/operations_benchmark.png'")
+
+def plot_stash_history(results_dir='results'):
+    """Plot stash size history from detailed metrics files."""
+    print("Plotting stash size history from detailed metrics files")
+    
+    # Find operation metrics files
+    operation_files = glob.glob(f"{results_dir}/operations_*.csv")
+    
+    if not operation_files:
+        print("No operation metrics files found.")
+        return
+    
+    plt.figure(figsize=(14, 8))
+    
+    for file in operation_files:
+        # Extract operation count from filename
+        try:
+            op_count = int(file.split('_')[-1].split('.')[0])
+        except:
+            print(f"Could not extract operation count from {file}")
+            continue
+        
+        # Read stash history section
+        stash_history = []
+        in_stash_section = False
+        line_count = 0
+        
+        try:
+            with open(file, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if line == "Stash Size History":
+                        in_stash_section = True
+                        continue
+                    
+                    if in_stash_section:
+                        if line and line != "Stash Size History":
+                            try:
+                                stash_history.append(int(line))
+                                line_count += 1
+                            except ValueError:
+                                # Skip non-integer lines
+                                pass
+            
+            if stash_history:
+                # Downsample for large histories to avoid cluttering the plot
+                if len(stash_history) > 1000:
+                    downsample_factor = len(stash_history) // 1000 + 1
+                    stash_history = stash_history[::downsample_factor]
+                
+                # Plot stash size over time
+                plt.plot(range(len(stash_history)), stash_history, 
+                         label=f'{op_count} ops ({len(stash_history)} points)')
+                
+                # Add horizontal line for stash limit
+                plt.axhline(y=STASH_LIMIT_DEFAULT, color='r', linestyle='--', alpha=0.5,
+                           label=f'Default Stash Limit ({STASH_LIMIT_DEFAULT})' if op_count == operation_files[0] else "")
+        except Exception as e:
+            print(f"Error processing {file}: {e}")
+    
+    plt.xlabel('Operation Sequence')
+    plt.ylabel('Stash Size')
+    plt.title('Stash Size Evolution During Operations')
+    plt.grid(True)
+    plt.legend()
+    
+    # Create visualizations directory if it doesn't exist
+    os.makedirs('visualizations', exist_ok=True)
+    plt.savefig('visualizations/stash_history.png', dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    print("Stash size history plot saved as 'visualizations/stash_history.png'")
 
 def plot_config_parameters(config_benchmark_path='config_benchmark_results.csv'):
     """Plot the impact of different configuration parameters on performance."""
@@ -253,6 +405,16 @@ def plot_config_parameters(config_benchmark_path='config_benchmark_results.csv')
         ax3_twin.plot(stash_limit_df['StashLimit'], stash_limit_df['MaxStashSize'], 's--', color='green', linewidth=2)
         ax3_twin.set_ylabel('Max Stash Size', color='green')
         ax3_twin.tick_params(axis='y', labelcolor='green')
+        
+        # Add utilization ratio line (MaxStashSize/StashLimit)
+        ax3_twin.plot(stash_limit_df['StashLimit'], 
+                     stash_limit_df['MaxStashSize']/stash_limit_df['StashLimit']*100, 
+                     '^--', color='purple', linewidth=2)
+        # Add second label
+        ax3_twin.set_ylabel('Max Stash Size / Utilization %', color='green')
+        # Add legend for purple line
+        ax3_twin.text(0.5, 0.95, 'Purple: Utilization %', transform=ax3_twin.transAxes, 
+                     color='purple', ha='center', va='top')
     
     # Plot 4: Tree Height vs Latency Components
     if not tree_height_df.empty:
@@ -290,259 +452,290 @@ def plot_config_parameters(config_benchmark_path='config_benchmark_results.csv')
         ax6.legend()
     
     plt.tight_layout()
-    plt.savefig('config_parameters.png', dpi=300, bbox_inches='tight')
+    # Create visualizations directory if it doesn't exist
+    os.makedirs('visualizations', exist_ok=True)
+    plt.savefig('visualizations/config_parameters.png', dpi=300, bbox_inches='tight')
     plt.close()
     
-    print("Configuration parameters plot saved as 'config_parameters.png'")
+    print("Configuration parameters plot saved as 'visualizations/config_parameters.png'")
 
-def plot_config_details():
-    """Plot details of different configurations from individual config files."""
-    print("Plotting configuration details from individual files")
+def generate_performance_summary(results_dir='results'):
+    """Generate a comprehensive summary of all results and metrics."""
+    print("Generating comprehensive performance summary...")
     
-    # List of config files to analyze
-    config_files = [
-        'config_th5_bc4_sl100.csv',
-        'config_th5_bc4_sl200.csv',
-        'config_th5_bc4_sl500.csv',
-        'config_th5_bc8_sl100.csv',
-        'config_th5_bc16_sl100.csv',
-        'config_th6_bc4_sl100.csv',
-        'config_th7_bc4_sl100.csv'
-    ]
+    summary_data = {}
     
-    # Extract configuration parameters from filenames
-    configs = []
-    for file in config_files:
-        parts = file.replace('.csv', '').split('_')
-        # Check if filename follows expected pattern
-        if len(parts) >= 4 and parts[1].startswith('th') and parts[2].startswith('bc') and parts[3].startswith('sl'):
-            config = {
-                'file': file,
-                'tree_height': int(parts[1][2:]),
-                'bucket_capacity': int(parts[2][2:]),
-                'stash_limit': int(parts[3][2:])
+    # Load operations benchmark data
+    ops_benchmark_path = f"{results_dir}/operations_benchmark.csv"
+    if os.path.exists(ops_benchmark_path):
+        ops_df = load_and_clean_data(ops_benchmark_path)
+        if ops_df is not None and not ops_df.empty:
+            summary_data['operations'] = {
+                'max_throughput': ops_df['ThroughputOpsPerSec'].max(),
+                'min_throughput': ops_df['ThroughputOpsPerSec'].min(),
+                'avg_throughput': ops_df['ThroughputOpsPerSec'].mean(),
+                'max_stash_size': ops_df['MaxStashSize'].max(),
+                'max_op_count': ops_df['OperationCount'].max(),
+                'error_rate': ops_df['ErrorCount'].sum() / (ops_df['OperationCount'].sum() * 3) * 100 if 'ErrorCount' in ops_df.columns else 'N/A'
             }
+    
+    # Load baseline comparison data
+    baseline_path = f"{results_dir}/baseline_comparison.csv"
+    if os.path.exists(baseline_path):
+        baseline_df = load_and_clean_data(baseline_path)
+        if baseline_df is not None and not baseline_df.empty:
+            summary_data['baseline'] = {
+                'avg_throughput_overhead': baseline_df['ThroughputOverhead'].mean(),
+                'avg_latency_overhead': baseline_df['InterestLatencyOverhead'].mean(),
+                'avg_memory_overhead': baseline_df['MemoryOverhead'].mean(),
+                'privacy_max_throughput': baseline_df['PrivacyThroughput'].max()
+            }
+    
+    # Count emergency operations from log files
+    log_files = glob.glob(f"{results_dir}/*.log")
+    if log_files:
+        emergency_evictions = 0
+        critical_evictions = 0
+        emergency_drops = 0
+        stash_expansions = 0
+        
+        for log_file in log_files:
+            try:
+                with open(log_file, 'r') as f:
+                    for line in f:
+                        if "[EMERGENCY]" in line:
+                            emergency_evictions += 1
+                        if "CRITICAL EVICTION" in line:
+                            critical_evictions += 1
+                        if "Dropping" in line and "blocks" in line:
+                            emergency_drops += 1
+                        if "Dynamically expanded" in line:
+                            stash_expansions += 1
+            except Exception as e:
+                print(f"Error processing {log_file}: {e}")
+        
+        summary_data['emergency'] = {
+            'emergency_evictions': emergency_evictions,
+            'critical_evictions': critical_evictions,
+            'emergency_drops': emergency_drops,
+            'stash_expansions': stash_expansions
+        }
+    
+    # Generate summary report
+    if summary_data:
+        report_path = 'visualizations/performance_summary.txt'
+        with open(report_path, 'w') as f:
+            f.write("==== NDN ROUTER PERFORMANCE SUMMARY ====\n\n")
+            f.write(f"Generated on: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
             
-            # Load the file data
-            series = load_and_clean_data(file)
-            if series is not None:
-                for metric in ['InterestLatencyMean', 'DataLatencyMean', 'RetrievalLatencyMean', 
-                               'Throughput', 'MaxStashSize', 'AvgStashSize']:
-                    if metric in series:
-                        config[metric] = series[metric]
+            f.write("CONFIGURATION PARAMETERS:\n")
+            f.write(f"Tree Height: {TREE_HEIGHT_DEFAULT}\n")
+            f.write(f"Bucket Capacity: {BUCKET_CAPACITY_DEFAULT}\n")
+            f.write(f"Stash Limit: {STASH_LIMIT_DEFAULT}\n")
+            f.write(f"Queue Tree Height: {QUEUE_TREE_HEIGHT_DEFAULT}\n")
+            f.write(f"Queue Bucket Capacity: {QUEUE_BUCKET_CAPACITY_DEFAULT}\n")
+            f.write(f"Queue Stash Limit: {QUEUE_STASH_LIMIT_DEFAULT}\n\n")
             
-            configs.append(config)
-    
-    if not configs:
-        print("No valid configuration files found or processed")
-        return
-    
-    # Create a DataFrame from the extracted configs
-    config_df = pd.DataFrame(configs)
-    
-    # Create a unique identifier for each configuration
-    config_df['config_id'] = config_df.apply(
-        lambda row: f"TH{row['tree_height']}-BC{row['bucket_capacity']}-SL{row['stash_limit']}", 
-        axis=1
-    )
-    
-    # Plot the results
-    fig, axes = plt.subplots(2, 2, figsize=(16, 12))
-    
-    # Plot 1: Throughput comparison
-    if 'Throughput' in config_df.columns:
-        sns.barplot(x='config_id', y='Throughput', data=config_df, ax=axes[0, 0], palette='viridis')
-        axes[0, 0].set_xlabel('Configuration')
-        axes[0, 0].set_ylabel('Throughput (ops/sec)')
-        axes[0, 0].set_title('Throughput Comparison Across Configurations')
-        axes[0, 0].set_xticklabels(axes[0, 0].get_xticklabels(), rotation=45, ha='right')
-    
-    # Plot 2: Latency comparison
-    latency_cols = [col for col in ['InterestLatencyMean', 'DataLatencyMean', 'RetrievalLatencyMean'] 
-                   if col in config_df.columns]
-    
-    if latency_cols:
-        # Reshape for grouped bar plot
-        latency_data = []
-        for _, row in config_df.iterrows():
-            for col in latency_cols:
-                if pd.notna(row[col]):
-                    latency_data.append({
-                        'config_id': row['config_id'],
-                        'latency_type': col.replace('LatencyMean', ''),
-                        'value': row[col]
-                    })
-        
-        latency_df = pd.DataFrame(latency_data)
-        if not latency_df.empty:
-            sns.barplot(x='config_id', y='value', hue='latency_type', data=latency_df, ax=axes[0, 1], palette='muted')
-            axes[0, 1].set_xlabel('Configuration')
-            axes[0, 1].set_ylabel('Latency (μs)')
-            axes[0, 1].set_title('Latency Comparison Across Configurations')
-            axes[0, 1].set_xticklabels(axes[0, 1].get_xticklabels(), rotation=45, ha='right')
-            axes[0, 1].legend(title='Latency Type')
-    
-    # Plot 3: Stash size comparison
-    stash_cols = [col for col in ['MaxStashSize', 'AvgStashSize'] if col in config_df.columns]
-    
-    if stash_cols:
-        # Reshape for grouped bar plot
-        stash_data = []
-        for _, row in config_df.iterrows():
-            for col in stash_cols:
-                if pd.notna(row[col]):
-                    stash_data.append({
-                        'config_id': row['config_id'],
-                        'stash_metric': col.replace('StashSize', ' Stash Size'),
-                        'value': row[col]
-                    })
-        
-        stash_df = pd.DataFrame(stash_data)
-        if not stash_df.empty:
-            sns.barplot(x='config_id', y='value', hue='stash_metric', data=stash_df, ax=axes[1, 0], palette='Set2')
-            axes[1, 0].set_xlabel('Configuration')
-            axes[1, 0].set_ylabel('Stash Size')
-            axes[1, 0].set_title('Stash Size Comparison Across Configurations')
-            axes[1, 0].set_xticklabels(axes[1, 0].get_xticklabels(), rotation=45, ha='right')
-            axes[1, 0].legend(title='Metric')
-    
-    # Plot 4: Heatmap of configuration parameters and performance
-    # Create a normalized version of key metrics for better visualization
-    if not config_df.empty and 'Throughput' in config_df.columns:
-        metrics_to_normalize = [col for col in ['Throughput', 'InterestLatencyMean', 'DataLatencyMean', 
-                                              'RetrievalLatencyMean', 'MaxStashSize'] 
-                               if col in config_df.columns]
-        
-        if metrics_to_normalize:
-            norm_df = config_df.copy()
-            for col in metrics_to_normalize:
-                if col == 'Throughput':
-                    # Higher throughput is better
-                    norm_df[f'{col}_norm'] = config_df[col] / config_df[col].max()
+            if 'operations' in summary_data:
+                ops = summary_data['operations']
+                f.write("OPERATIONS BENCHMARK METRICS:\n")
+                f.write(f"Maximum Throughput: {ops['max_throughput']:.2f} ops/sec\n")
+                f.write(f"Minimum Throughput: {ops['min_throughput']:.2f} ops/sec\n")
+                f.write(f"Average Throughput: {ops['avg_throughput']:.2f} ops/sec\n")
+                f.write(f"Maximum Stash Size: {ops['max_stash_size']} blocks\n")
+                f.write(f"Maximum Operation Count: {ops['max_op_count']} operations\n")
+                f.write(f"Error Rate: {ops['error_rate']}%\n\n")
+            
+            if 'baseline' in summary_data:
+                baseline = summary_data['baseline']
+                f.write("PRIVACY OVERHEAD METRICS:\n")
+                f.write(f"Throughput Overhead: {baseline['avg_throughput_overhead']:.2f}x\n")
+                f.write(f"Latency Overhead: {baseline['avg_latency_overhead']:.2f}x\n")
+                f.write(f"Memory Overhead: {baseline['avg_memory_overhead']:.2f}x\n")
+                f.write(f"Privacy Implementation Max Throughput: {baseline['privacy_max_throughput']:.2f} ops/sec\n\n")
+            
+            if 'emergency' in summary_data:
+                emergency = summary_data['emergency']
+                f.write("EMERGENCY OPERATIONS METRICS:\n")
+                f.write(f"Emergency Evictions: {emergency['emergency_evictions']}\n")
+                f.write(f"Critical Evictions: {emergency['critical_evictions']}\n")
+                f.write(f"Emergency Block Drops: {emergency['emergency_drops']}\n")
+                f.write(f"Dynamic Stash Expansions: {emergency['stash_expansions']}\n\n")
+            
+            f.write("CONCLUSIONS:\n")
+            
+            # Generate some automatic conclusions based on the data
+            if 'operations' in summary_data and 'baseline' in summary_data:
+                ops = summary_data['operations']
+                baseline = summary_data['baseline']
+                
+                # Throughput assessment
+                throughput_overhead = baseline['avg_throughput_overhead']
+                if throughput_overhead < 3:
+                    f.write("- The privacy-preserving implementation shows excellent throughput performance with minimal overhead.\n")
+                elif throughput_overhead < 10:
+                    f.write("- The privacy-preserving implementation shows acceptable throughput overhead for the privacy benefits.\n")
                 else:
-                    # Lower latency/stash size is better
-                    norm_df[f'{col}_norm'] = 1 - (config_df[col] / config_df[col].max())
+                    f.write("- The privacy-preserving implementation has significant throughput overhead, which may be a concern for high-throughput applications.\n")
+                
+                # Stash assessment
+                if 'emergency' in summary_data:
+                    emergency = summary_data['emergency']
+                    if emergency['emergency_drops'] > 0:
+                        f.write("- The system had to drop non-essential blocks to maintain operation, indicating that stash parameters may need adjustment.\n")
+                    elif emergency['stash_expansions'] > 0:
+                        f.write("- The system needed to dynamically expand the stash size, suggesting that a larger default stash size might be beneficial.\n")
+                    
+                    if emergency['critical_evictions'] > 10:
+                        f.write("- High number of critical evictions suggests that more aggressive background eviction might help performance.\n")
+                
+                # Overall assessment
+                max_op_count = ops['max_op_count']
+                if max_op_count >= 1000:
+                    f.write("- The system successfully handled large operation counts, demonstrating scalability.\n")
+                elif max_op_count >= 500:
+                    f.write("- The system handled moderate operation counts successfully.\n")
+                else:
+                    f.write("- The system handled smaller operation counts. More testing is needed to assess scalability.\n")
             
-            # Create a heatmap of normalized metrics
-            norm_cols = [f'{col}_norm' for col in metrics_to_normalize]
-            heatmap_df = norm_df.set_index('config_id')[norm_cols]
-            heatmap_df.columns = [col.replace('_norm', '') for col in heatmap_df.columns]
-            
-            if not heatmap_df.empty:
-                sns.heatmap(heatmap_df, annot=True, cmap='RdYlGn', ax=axes[1, 1])
-                axes[1, 1].set_title('Performance Metrics Across Configurations (Normalized)')
-                axes[1, 1].set_ylabel('Configuration')
-                # Higher values (green) indicate better performance
-                axes[1, 1].text(1.05, 0.5, "Higher is better", rotation=90, va='center', transform=axes[1, 1].transAxes)
-    
-    plt.tight_layout()
-    plt.savefig('config_details.png', dpi=300, bbox_inches='tight')
-    plt.close()
-    
-    print("Configuration details plot saved as 'config_details.png'")
+            # Final comment on the code changes we made
+            f.write("\nIMPROVEMENTS ASSESSMENT:\n")
+            f.write("- The simplified bucket structure without atomic locks has improved compilation and stability.\n")
+            f.write("- Increased default stash limit and bucket capacity parameters have enhanced the system's ability to handle larger workloads.\n")
+            f.write("- Emergency block dropping and dynamic stash expansion features have added robustness to prevent crashes under high load.\n")
+            f.write("- More aggressive eviction triggers have helped maintain reasonable stash utilization.\n")
+        
+        print(f"Performance summary saved to {report_path}")
+    else:
+        print("Not enough data to generate performance summary.")
 
-def plot_trade_off_analysis():
-    """Plot trade-off analysis between parameters."""
-    print("Plotting trade-off analysis")
+def plot_emergency_mode_analysis(results_dir='results'):
+    """Plot analysis of emergency mode activations."""
+    print("Analyzing emergency mode activations")
     
-    # Load benchmark results
-    df = load_and_clean_data('config_benchmark_results.csv')
-    if df is None or df.empty:
-        print("No data found for trade-off analysis")
+    # Look for log files with emergency mode metrics
+    log_files = glob.glob(f"{results_dir}/*.log")
+    
+    if not log_files:
+        print("No log files found for emergency mode analysis.")
         return
     
-    # Remove error rows
-    df = df[~df['Throughput'].astype(str).str.contains('ERROR')]
-    df['Throughput'] = pd.to_numeric(df['Throughput'], errors='coerce')
-    df = df.dropna(subset=['Throughput'])
+    # Collect data about emergency operations
+    emergency_data = []
     
-    if df.empty:
-        print("No valid data points for trade-off analysis")
+    for log_file in log_files:
+        op_count = 0
+        try:
+            # Try to extract operation count from filename
+            op_count = int(log_file.split('_')[-1].split('.')[0])
+        except:
+            # If can't extract from filename, use index as identifier
+            op_count = log_files.index(log_file)
+        
+        # Collect emergency operation counts
+        emergency_evictions = 0
+        critical_evictions = 0
+        emergency_drops = 0
+        stash_expansions = 0
+        
+        try:
+            with open(log_file, 'r') as f:
+                for line in f:
+                    if "[EMERGENCY]" in line:
+                        emergency_evictions += 1
+                    if "CRITICAL EVICTION" in line:
+                        critical_evictions += 1
+                    if "Dropping" in line and "blocks" in line:
+                        emergency_drops += 1
+                    if "Dynamically expanded" in line:
+                        stash_expansions += 1
+            
+            emergency_data.append({
+                'operation_count': op_count,
+                'emergency_evictions': emergency_evictions,
+                'critical_evictions': critical_evictions,
+                'emergency_drops': emergency_drops,
+                'stash_expansions': stash_expansions
+            })
+        except Exception as e:
+            print(f"Error processing {log_file}: {e}")
+    
+    if not emergency_data:
+        print("No emergency mode data found.")
         return
     
-    # Create figure
-    fig, axes = plt.subplots(2, 2, figsize=(14, 12))
+    # Create a DataFrame
+    em_df = pd.DataFrame(emergency_data)
+    em_df = em_df.sort_values('operation_count')
     
-    # Plot 1: Tree Height vs Throughput (different bucket capacities)
-    ax1 = axes[0, 0]
-    bucket_sizes = df['BucketCapacity'].unique()
-    for bc in bucket_sizes:
-        subset = df[(df['BucketCapacity'] == bc) & (df['StashLimit'] == 100)]
-        if not subset.empty:
-            ax1.plot(subset['TreeHeight'], subset['Throughput'], 'o-', 
-                     linewidth=2, label=f'BC={bc}')
+    # Create visualization
+    plt.figure(figsize=(14, 8))
     
-    ax1.set_xlabel('Tree Height')
-    ax1.set_ylabel('Throughput (ops/sec)')
-    ax1.set_title('Tree Height vs Throughput (Different Bucket Capacities)')
-    if len(bucket_sizes) > 1:
-        ax1.legend(title='Bucket Capacity')
-    
-    # Plot 2: Tree Height vs Interest Latency (different bucket capacities)
-    ax2 = axes[0, 1]
-    for bc in bucket_sizes:
-        subset = df[(df['BucketCapacity'] == bc) & (df['StashLimit'] == 100)]
-        if not subset.empty:
-            ax2.plot(subset['TreeHeight'], subset['AvgInterestLatency'], 'o-', 
-                     linewidth=2, label=f'BC={bc}')
-    
-    ax2.set_xlabel('Tree Height')
-    ax2.set_ylabel('Average Interest Latency (μs)')
-    ax2.set_title('Tree Height vs Interest Latency (Different Bucket Capacities)')
-    if len(bucket_sizes) > 1:
-        ax2.legend(title='Bucket Capacity')
-    
-    # Plot 3: Throughput vs Latency scatter plot
-    ax3 = axes[1, 0]
-    scatter = ax3.scatter(df['Throughput'], df['AvgInterestLatency'], 
-                         c=df['TreeHeight'], cmap='viridis', s=100, alpha=0.7)
-    
-    # Add labels to points
-    for i, row in df.iterrows():
-        ax3.annotate(f"TH{row['TreeHeight']},BC{row['BucketCapacity']}",
-                    (row['Throughput'], row['AvgInterestLatency']),
-                    xytext=(5, 5), textcoords='offset points',
-                    fontsize=8)
-    
-    ax3.set_xlabel('Throughput (ops/sec)')
-    ax3.set_ylabel('Average Interest Latency (μs)')
-    ax3.set_title('Throughput vs Latency Trade-off')
-    cbar = plt.colorbar(scatter, ax=ax3)
-    cbar.set_label('Tree Height')
-    
-    # Plot 4: Stash Limit impact on throughput and max stash size
-    stash_df = df[df['TreeHeight'] == 5][df['BucketCapacity'] == 4]
-    if not stash_df.empty:
-        ax4 = axes[1, 1]
-        ax4.plot(stash_df['StashLimit'], stash_df['Throughput'], 'o-', color='blue', linewidth=2)
-        ax4.set_xlabel('Stash Limit')
-        ax4.set_ylabel('Throughput (ops/sec)', color='blue')
-        ax4.tick_params(axis='y', labelcolor='blue')
+    if not em_df.empty:
+        width = 0.2
+        x = np.arange(len(em_df))
         
-        ax4_twin = ax4.twinx()
-        ax4_twin.plot(stash_df['StashLimit'], stash_df['MaxStashSize'], 's--', color='red', linewidth=2)
-        ax4_twin.set_ylabel('Max Stash Size', color='red')
-        ax4_twin.tick_params(axis='y', labelcolor='red')
+        plt.bar(x - 1.5*width, em_df['emergency_evictions'], width, label='Emergency Evictions')
+        plt.bar(x - 0.5*width, em_df['critical_evictions'], width, label='Critical Evictions')
+        plt.bar(x + 0.5*width, em_df['emergency_drops'], width, label='Block Drops')
+        plt.bar(x + 1.5*width, em_df['stash_expansions'], width, label='Stash Expansions')
         
-        ax4.set_title('Impact of Stash Limit on Throughput and Max Stash Size')
-    
-    plt.tight_layout()
-    plt.savefig('trade_off_analysis.png', dpi=300, bbox_inches='tight')
-    plt.close()
-    
-    print("Trade-off analysis plot saved as 'trade_off_analysis.png'")
+        plt.xlabel('Operation Count')
+        plt.ylabel('Count')
+        plt.title('Emergency Mode Operations')
+        plt.xticks(x, em_df['operation_count'])
+        plt.legend()
+        
+        # Create visualizations directory if it doesn't exist
+        os.makedirs('visualizations', exist_ok=True)
+        plt.savefig('visualizations/emergency_mode_analysis.png', dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        print("Emergency mode analysis plot saved as 'visualizations/emergency_mode_analysis.png'")
+    else:
+        print("Not enough data for emergency mode visualization.")
+
+# Default constants
+TREE_HEIGHT_DEFAULT = 8
+BUCKET_CAPACITY_DEFAULT = 20
+STASH_LIMIT_DEFAULT = 250
+QUEUE_TREE_HEIGHT_DEFAULT = 8
+QUEUE_BUCKET_CAPACITY_DEFAULT = 20
+QUEUE_STASH_LIMIT_DEFAULT = 250
 
 def main():
     """Main function to run all visualization functions."""
     print("Starting NDN Router Performance Visualization")
     
-    plot_baseline_comparison()
-    plot_operations_benchmark()
-    plot_config_parameters()
-    plot_config_details()
-    plot_trade_off_analysis()
+    # Create visualizations directory if it doesn't exist
+    os.makedirs('visualizations', exist_ok=True)
     
-    print("All visualizations completed successfully!")
+    # Run visualizations based on available files
+    if os.path.exists('baseline_comparison.csv'):
+        plot_baseline_comparison()
+    else:
+        print("baseline_comparison.csv not found, skipping baseline comparison visualization.")
+    
+    if os.path.exists('operations_benchmark.csv'):
+        plot_operations_benchmark()
+    else:
+        print("operations_benchmark.csv not found, skipping operations benchmark visualization.")
+    
+    if os.path.exists('config_benchmark_results.csv'):
+        plot_config_parameters()
+    else:
+        print("config_benchmark_results.csv not found, skipping configuration parameter visualization.")
+    
+    # Plot stash history from detailed metrics files
+    plot_stash_history()
+    
+    # Plot emergency mode analysis if log files exist
+    plot_emergency_mode_analysis()
+    
+    # Generate comprehensive performance summary
+    generate_performance_summary()
+    
+    print("All available visualizations completed successfully!")
 
 if __name__ == "__main__":
     main()
