@@ -9,6 +9,184 @@ import numpy as np
 import sys
 from matplotlib.ticker import ScalarFormatter
 
+def create_enhanced_throughput_visualizations(df):
+    """Create enhanced visualizations for throughput data"""
+    import matplotlib.pyplot as plt
+    import numpy as np
+    from matplotlib.ticker import ScalarFormatter
+    import seaborn as sns
+    
+    # Create visualizations directory if it doesn't exist
+    os.makedirs("visualizations", exist_ok=True)
+    
+    # 1. Normalized Throughput Plot - Shows relative performance
+    plt.figure(figsize=(10, 6))
+    # Normalize to the maximum throughput = 100%
+    max_throughput = df['ThroughputOpsPerSec'].max()
+    normalized = (df['ThroughputOpsPerSec'] / max_throughput) * 100
+    
+    # Plot both actual and normalized values
+    fig, ax1 = plt.subplots(figsize=(12, 7))
+    
+    # Plot actual throughput (bars)
+    bars = ax1.bar(df['OperationCount'].astype(str), df['ThroughputOpsPerSec'], 
+            alpha=0.6, color='steelblue')
+    ax1.set_xlabel('Number of Operations')
+    ax1.set_ylabel('Throughput (ops/sec)', color='steelblue')
+    ax1.tick_params(axis='y', labelcolor='steelblue')
+    
+    # Add text labels on bars
+    for bar in bars:
+        height = bar.get_height()
+        ax1.text(bar.get_x() + bar.get_width()/2., height + 5,
+                f'{height:.1f}', ha='center', va='bottom')
+    
+    # Plot normalized throughput (line)
+    ax2 = ax1.twinx()
+    ax2.plot(np.arange(len(df)), normalized, 'ro-', linewidth=2, markersize=8)
+    ax2.set_ylabel('Percent of Peak Throughput (%)', color='red')
+    ax2.tick_params(axis='y', labelcolor='red')
+    ax2.set_ylim(0, 105)  # 0-100% with a little margin
+    
+    # Add percentage labels
+    for i, val in enumerate(normalized):
+        ax2.annotate(f'{val:.1f}%', 
+                    (i, val), 
+                    textcoords="offset points", 
+                    xytext=(0, 5), 
+                    ha='center',
+                    color='darkred')
+    
+    plt.title('Throughput vs. Operation Count (Absolute and Relative)')
+    plt.tight_layout()
+    plt.savefig('visualizations/throughput_normalized.png', dpi=300)
+    plt.close()
+    
+    # 2. Throughput vs Operation Count Scatter with Trend Line
+    plt.figure(figsize=(12, 7))
+    
+    # Create scatter plot
+    plt.scatter(df['OperationCount'], df['ThroughputOpsPerSec'], 
+               s=100, alpha=0.7, color='blue', edgecolor='black')
+    
+    # Add trend line with confidence interval
+    sns.regplot(x=df['OperationCount'], y=df['ThroughputOpsPerSec'], 
+               scatter=False, ci=95, line_kws={"color":"red"})
+    
+    # Annotate points
+    for i, (x, y) in enumerate(zip(df['OperationCount'], df['ThroughputOpsPerSec'])):
+        plt.annotate(f"{y:.1f}", (x, y), textcoords="offset points", 
+                    xytext=(0, 10), ha='center')
+    
+    plt.xlabel('Number of Operations')
+    plt.ylabel('Throughput (ops/sec)')
+    plt.title('Throughput vs. Operation Count with Trend Line')
+    plt.grid(True, linestyle='--', alpha=0.7)
+    plt.tight_layout()
+    plt.savefig('visualizations/throughput_trendline.png', dpi=300)
+    plt.close()
+    
+    # 3. Throughput Efficiency (Throughput per Operation)
+    plt.figure(figsize=(12, 7))
+    
+    # Calculate efficiency (throughput per operation)
+    df['Efficiency'] = df['ThroughputOpsPerSec'] / df['OperationCount']
+    
+    plt.plot(df['OperationCount'], df['Efficiency'], 'go-', linewidth=2, markersize=10)
+    
+    for i, (x, y) in enumerate(zip(df['OperationCount'], df['Efficiency'])):
+        plt.annotate(f"{y:.5f}", (x, y), textcoords="offset points", 
+                    xytext=(5, 5), ha='left')
+    
+    plt.xlabel('Number of Operations')
+    plt.ylabel('Efficiency (throughput/op)')
+    plt.title('Throughput Efficiency vs. Operation Count')
+    plt.grid(True, linestyle='--', alpha=0.7)
+    plt.tight_layout()
+    plt.savefig('visualizations/throughput_efficiency.png', dpi=300)
+    plt.close()
+    
+    # 4. Throughput vs. Total Time with Execution Time per Operation
+    fig, ax1 = plt.subplots(figsize=(12, 7))
+    
+    # Calculate average time per operation (in milliseconds)
+    df['TimePerOp'] = (df['TotalTimeSeconds'] * 1000) / (df['OperationCount'])
+    
+    # Bar plot for throughput
+    bars = ax1.bar(df['OperationCount'].astype(str), df['ThroughputOpsPerSec'], 
+                  alpha=0.6, color='steelblue')
+    ax1.set_xlabel('Number of Operations')
+    ax1.set_ylabel('Throughput (ops/sec)', color='steelblue')
+    ax1.tick_params(axis='y', labelcolor='steelblue')
+    
+    # Line plot for time per operation
+    ax2 = ax1.twinx()
+    ax2.plot(np.arange(len(df)), df['TimePerOp'], 'mo-', linewidth=2, markersize=8)
+    ax2.set_ylabel('Time per Operation (ms)', color='purple')
+    ax2.tick_params(axis='y', labelcolor='purple')
+    
+    # Add percentage labels
+    for i, val in enumerate(df['TimePerOp']):
+        ax2.annotate(f'{val:.2f} ms', 
+                    (i, val), 
+                    textcoords="offset points", 
+                    xytext=(0, 5), 
+                    ha='center',
+                    color='darkmagenta')
+    
+    plt.title('Throughput and Execution Time per Operation')
+    plt.tight_layout()
+    plt.savefig('visualizations/throughput_time_per_op.png', dpi=300)
+    plt.close()
+    
+    # 5. Radar Chart for Performance Metrics
+    # Only create if we have enough metrics
+    if 'InterestLatencyMean' in df.columns and 'MaxStashSize' in df.columns:
+        # Normalize all metrics to 0-1 scale for radar chart
+        metrics = ['ThroughputOpsPerSec', 'InterestLatencyMean', 'DataLatencyMean', 
+                  'MaxStashSize', 'TotalTimeSeconds']
+        
+        # Filter out any metrics that don't exist
+        available_metrics = [m for m in metrics if m in df.columns]
+        
+        if len(available_metrics) >= 3:  # Need at least 3 metrics for a meaningful radar chart
+            # Create radar charts for each operation count
+            for i, op_count in enumerate(df['OperationCount']):
+                # For radar chart, higher is better, so invert latency and stash size
+                values = []
+                for metric in available_metrics:
+                    val = df[metric].iloc[i]
+                    # For latency and time, lower is better, so invert the normalization
+                    if metric in ['InterestLatencyMean', 'DataLatencyMean', 'MaxStashSize', 'TotalTimeSeconds']:
+                        # Find max value safely
+                        max_val = df[metric].max() if df[metric].max() > 0 else 1
+                        values.append(1 - (val / max_val))
+                    else:
+                        # For throughput, higher is better
+                        max_val = df[metric].max() if df[metric].max() > 0 else 1
+                        values.append(val / max_val)
+                
+                # Create radar chart
+                num_metrics = len(available_metrics)
+                angles = np.linspace(0, 2*np.pi, num_metrics, endpoint=False).tolist()
+                # Close the polygon
+                values = values + [values[0]]
+                angles = angles + [angles[0]]
+                available_metrics_labels = available_metrics + [available_metrics[0]]
+                
+                # Create plot
+                fig, ax = plt.subplots(figsize=(8, 8), subplot_kw=dict(polar=True))
+                ax.plot(angles, values, 'o-', linewidth=2)
+                ax.fill(angles, values, alpha=0.25)
+                ax.set_thetagrids(np.degrees(angles), available_metrics_labels)
+                ax.set_ylim(0, 1)
+                ax.set_title(f'Performance Profile - {op_count} Operations')
+                plt.tight_layout()
+                plt.savefig(f'visualizations/radar_profile_{op_count}_ops.png', dpi=300)
+                plt.close()
+    
+    print("Enhanced throughput visualizations saved to visualizations directory")
+
 def analyze_operations_benchmark(csv_file="operations_benchmark.csv"):
     """Analyze and visualize the operations benchmark results"""
     print(f"Analyzing operations benchmark data from {csv_file}")
@@ -47,7 +225,15 @@ def analyze_operations_benchmark(csv_file="operations_benchmark.csv"):
     ax1.set_xlabel('Number of Operations')
     ax1.set_ylabel('Throughput (ops/sec)')
     ax1.set_title('Throughput vs. Operation Count')
-    ax1.grid(True)
+    ax1.set_yscale('log')  # Set logarithmic scale for y-axis
+    ax1.grid(True, which="both")  # Grid lines for both major and minor ticks
+    # Format y-axis to show actual values instead of powers of 10
+    ax1.yaxis.set_major_formatter(ScalarFormatter())
+    # Add minor gridlines for better readability in log scale
+    ax1.minorticks_on()
+    # ax1.grid(True, which='minor', linestyle=':', alpha=0.5)
+    # Add this function call at the end of analyze_operations_benchmark
+    create_enhanced_throughput_visualizations(df)
     
     # Plot 2: Latency vs Operation Count
     ax2 = axes[0, 1]

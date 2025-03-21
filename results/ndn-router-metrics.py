@@ -91,15 +91,16 @@ def plot_baseline_comparison(baseline_comp_path='baseline_comparison.csv'):
     
     # Plot 3: Overhead factors
     ax3 = fig.add_subplot(gs[0, 2])
+    # Remove 'RetrievalLatencyOverhead' from the metrics list
     overhead_metrics = ['ThroughputOverhead', 'InterestLatencyOverhead', 
-                         'DataLatencyOverhead', 'RetrievalLatencyOverhead']
-    overhead_labels = ['Throughput', 'Interest\nLatency', 'Data\nLatency', 'Retrieval\nLatency']
-    
+                        'DataLatencyOverhead']
+    overhead_labels = ['Throughput', 'Interest\nLatency', 'Data\nLatency']
+
     for i, op_count in enumerate(df['OperationCount']):
         values = [df[metric].iloc[i] for metric in overhead_metrics]
         ax3.bar(np.arange(len(overhead_metrics)) + i*width, values, width, 
                 label=f'{op_count} ops')
-    
+
     ax3.set_xlabel('Metric')
     ax3.set_ylabel('Overhead Factor (×)')
     ax3.set_title('Performance Overhead Factors')

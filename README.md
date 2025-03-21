@@ -1,13 +1,21 @@
 # Setting up the Docker Container
 
 to build the Docker container:   `docker build -t ndn-privacy-test .`
-to run:     `docker run -it --rm --cpus=4 --memory=8g -v "$(pwd)/results:/app/results" ndn-privacy test`
+to run:     `docker run -it --rm -v "$(pwd)/results:/app/results" ndn-privacy test`
 
 # Running Experiments using the docker Container
 
-`./run_test.sh benchmark 100`
-`./run_test.sh treeheight`
-`./run_test.sh concurrency 16`
+`./tree-test <mode> [options]`
+Modes:
+    operations       - Test with different operation counts (100-10000)
+    configurations   - Test with different ORAM configurations
+    comparison       - Compare with baseline implementation
+    full             - Run all benchmark tests
+    custom (th) (bc) (sl) (ops) - Run with custom parameters:
+                    (th): Tree height
+                    (bc): Bucket capacity
+                    (sl): Stash limit
+                    (ops): Number of operations
 
 
 # Deferred Retrieval in PBACN-ICN

@@ -123,73 +123,12 @@ g++ -o tree-test tree-test.cpp -lcrypto -pthread -std=c++17 "$@"\n\
 echo "Compilation complete. Run with: ./tree-test [test_mode] [options]"\n\
 ' > /app/compile.sh && chmod +x /app/compile.sh
 
-# Create a helper script to run common tests
-RUN echo '#!/bin/bash\n\
-cd /app\n\
-\n\
-case "$1" in\n\
-  benchmark)\n\
-    shift\n\
-    ./tree-test benchmark "$@"\n\
-    ;;\n\
-  treeheight)\n\
-    ./tree-test treeheight\n\
-    ;;\n\
-  concurrency)\n\
-    shift\n\
-    ./tree-test concurrency "$@"\n\
-    ;;\n\
-  profile)\n\
-    ./tree-test profile\n\
-    ;;\n\
-  unittest)\n\
-    ./tree-test unittest\n\
-    ;;\n\
-  integration)\n\
-    ./tree-test integration\n\
-    ;;\n\
-  configtest)\n\
-    shift\n\
-    ./tree-test configtest "$@"\n\
-    ;;\n\
-  *)\n\
-    echo "Usage: $0 [test_mode] [options]"\n\
-    echo "Available test modes:"\n\
-    echo "  benchmark [num_operations]"\n\
-    echo "  treeheight"\n\
-    echo "  concurrency [max_threads]"\n\
-    echo "  profile"\n\
-    echo "  unittest"\n\
-    echo "  integration"\n\
-    echo "  configtest [num_operations]"\n\
-    ;;\n\
-esac\n\
-' > /app/run_test.sh && chmod +x /app/run_test.sh
-
 # Expose port 12345 for the integration test (UDP-based network simulation).
 EXPOSE 12345
 
 # Copy files as the last step to leverage Docker caching
 # Note: when rebuilding, only this step will be executed if files changed
 COPY crypto.hpp tree-map.hpp tree-queue.hpp tree-test.cpp /app/
-
-# Create a simple initialization script
-RUN echo '#!/bin/bash\n\
-echo "Welcome to the NDN Privacy Testing Environment"\n\
-echo "============================================="\n\
-echo "Compiling latest code..."\n\
-/app/compile.sh\n\
-echo ""\n\
-echo "Available commands:"\n\
-echo "  ./compile.sh       - Rebuild the code (e.g. after modifying headers)"\n\
-echo "  ./run_test.sh      - Show available test modes"\n\
-echo "  ./run_test.sh benchmark [num]  - Run benchmark with num operations"\n\
-echo "  ./run_test.sh configtest [num] - Run configuration tests"\n\
-echo "  ./tree-test [args] - Run with custom arguments"\n\
-echo ""\n\
-echo "Use 'exit' to leave the container"\n\
-echo "============================================="\n\
-' > /app/init.sh && chmod +x /app/init.sh
 
 # Set working directory
 WORKDIR /app
